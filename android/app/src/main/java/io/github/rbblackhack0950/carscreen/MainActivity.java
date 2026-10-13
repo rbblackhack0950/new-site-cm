@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
     private WebChromeClient.CustomViewCallback customCb;
     private GeolocationPermissions.Callback geoCb;
     private String geoOrigin;
+    private volatile String userAgent; // read on the UI thread, used by background requests
 
     @Override
     protected void onCreate(Bundle state) {
@@ -91,6 +92,7 @@ public class MainActivity extends Activity {
     private void setupApp() {
         WebSettings s = app.getSettings();
         commonSettings(s);
+        userAgent = s.getUserAgentString();
         s.setGeolocationEnabled(true);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(app, true);
@@ -290,6 +292,14 @@ public class MainActivity extends Activity {
             return isInMultiWindowMode();
         }
 
+        /** GET a URL outside the browser's rules (CORS, redirects); answers window.__http(id, status, finalUrl, body) */
+        @JavascriptInterface
+        public void httpGet(final int id, final String url) {
+            new Thread(new Runnable() {
+                public void run() { fetchForPage(id, url); }
+            }).start();
+        }
+
         /** Installed app version, compared by the web app with dist/version.json */
         @JavascriptInterface
         public int appVersion() {
@@ -359,6 +369,30 @@ public class MainActivity extends Activity {
             String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
             updateStatus("error", "ติดตั้งไม่สำเร็จ" + (msg != null ? " (" + msg + ")" : ""));
         }
+    }
+
+    private void fetchForPage(final int id, String url) {
+        int status = 0;
+        String finalUrl = url, body = "";
+        try {
+            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(15000);
+            if (userAgent != null) c.setRequestProperty("User-Agent", userAgent);
+            status = c.getResponseCode();
+            finalUrl = c.getURL().toString();
+            InputStream in = status < 400 ? c.getInputStream() : c.getErrorStream();
+            if (in != null) {
+                byte[] data = readAll(in);
+                body = new String(data, 0, Math.min(data.length, 2 * 1024 * 1024), "UTF-8");
+            }
+        } catch (Exception ignored) {
+        }
+        final String js = "window.__http && window.__http(" + id + "," + status + ","
+                + JSONObject.quote(finalUrl) + "," + JSONObject.quote(body) + ")";
+        runOnUiThread(new Runnable() {
+            public void run() { app.evaluateJavascript(js, null); }
+        });
     }
 
     private void updateStatus(final String state, final String message) {

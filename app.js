@@ -12,7 +12,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', ytClientId: '', navGoogle: false, avoid: { toll: false, motorway: false, ferry: false }, custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
+const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', ytClientId: '', navGoogle: false, longdoKey: '', avoid: { toll: false, motorway: false, ferry: false }, custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 const save = () => store.set('carscreen', st);
 
@@ -336,32 +336,90 @@ document.addEventListener('pointerdown', e => {
   if (!resEl.hidden && !e.target.closest('#results,#search')) showResults('');
 });
 let searchSeq = 0;
+// ---------- Place search ----------
+// Longdo Map (Thai company, far more Thai places than OpenStreetMap) when a free key is set,
+// OpenStreetMap (Nominatim) always, merged nearest-first without duplicates.
+const LONGDO = 'https://search.longdo.com/mapsearch/json/search?';
+// Google Maps links: full links carry coordinates; short maps.app.goo.gl links are resolved by the Android app
+function parseGmaps(url) {
+  const n = '(-?\\d{1,3}\\.\\d+)';
+  const m = url.match(new RegExp('!3d' + n + '!4d' + n)) || url.match(new RegExp('[?&](?:q|ll|query|destination|daddr)=' + n + '(?:,|%2C)\\+?' + n))
+    || url.match(new RegExp('@' + n + ',' + n));
+  if (!m) return null;
+  const name = decodeURIComponent((url.match(/\/place\/([^/@?]+)/) || [])[1] || '').replace(/\+/g, ' ');
+  return { lat: +m[1], lng: +m[2], name: name || 'ตำแหน่งจาก Google Maps', sub: `${(+m[1]).toFixed(5)}, ${(+m[2]).toFixed(5)}` };
+}
+// GET through the Android app when the browser is not allowed to (CORS) or a redirect must be followed
+let httpSeq = 0; const httpWait = {};
+window.__http = (id, status, finalUrl, body) => { httpWait[id]?.({ status, finalUrl, body }); delete httpWait[id]; };
+function nativeGet(url, ms = 12000) {
+  if (!native?.httpGet) return Promise.reject(new Error('no-native'));
+  return new Promise((res, rej) => {
+    const id = ++httpSeq; httpWait[id] = res; native.httpGet(id, url);
+    setTimeout(() => { if (httpWait[id]) { delete httpWait[id]; rej(new Error('timeout')); } }, ms);
+  });
+}
+async function getJSONany(url) {
+  try { return await getJSON(url); }
+  catch (e) {
+    if (!native?.httpGet) throw e;
+    const r = await nativeGet(url);
+    if (r.status !== 200) throw new Error('HTTP ' + r.status);
+    return JSON.parse(r.body);
+  }
+}
+async function searchLongdo(q, c) {
+  const p = new URLSearchParams({ keyword: q, key: st.longdoKey, limit: 15, span: '200km' });
+  if (c) { p.set('lat', c[0]); p.set('lon', c[1]); }
+  const j = await getJSONany(LONGDO + p);
+  return (j.data || []).filter(x => x.lat != null && x.lon != null && x.name)
+    .map(x => ({ lat: +x.lat, lng: +x.lon, name: String(x.name).replace(/<[^>]*>/g, ''), sub: (x.address || '').replace(/<[^>]*>/g, ''), src: 'longdo' }));
+}
+async function searchOSM(q, c) {
+  const p = new URLSearchParams({ q, format: 'jsonv2', limit: 8, 'accept-language': 'th,en', addressdetails: 0 });
+  if (c) { p.set('viewbox', [c[1] - .6, c[0] + .6, c[1] + .6, c[0] - .6].join(',')); p.set('bounded', 0); }
+  const list = await getJSON(NOMI + 'search?' + p);
+  return list.map(r => {
+    const parts = r.display_name.split(', ');
+    return { lat: +r.lat, lng: +r.lon, name: r.name || parts[0], sub: parts.slice(1, 4).join(', '), src: 'osm' };
+  });
+}
 $('#search').onsubmit = async e => {
   e.preventDefault();
   const q = qEl.value.trim(); if (!q) return;
   const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
   if (coord) { qEl.blur(); return pickDest({ lat: +coord[1], lng: +coord[2], name: q, sub: 'พิกัด' }); }
+  if (/^(https?:\/\/)?([a-z]+\.)?(google\.[a-z.]+\/maps|maps\.google\.|maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(q)) return openGmapsLink(q);
   const seq = ++searchSeq;
   showResults('<div class="label">กำลังค้นหา…</div>');
   const c = here.ll || (map ? [map.getCenter().lat, map.getCenter().lng] : null);
-  const p = new URLSearchParams({ q, format: 'jsonv2', limit: 8, 'accept-language': 'th,en', addressdetails: 0 });
-  if (c) { p.set('viewbox', [c[1] - .6, c[0] + .6, c[1] + .6, c[0] - .6].join(',')); p.set('bounded', 0); }
-  try {
-    const list = await getJSON(NOMI + 'search?' + p);
-    if (seq !== searchSeq) return;
-    if (!list.length) return showResults('<div class="label">ไม่พบสถานที่ ลองพิมพ์ชื่ออื่น หรือกดค้างบนแผนที่เพื่อเลือกจุด</div>');
-    const items = list.map(r => {
-      const parts = r.display_name.split(', ');
-      return { lat: +r.lat, lng: +r.lon, name: r.name || parts[0], sub: parts.slice(1, 4).join(', ') };
-    });
-    if (c) items.forEach(i => i.d = haversine(c, [i.lat, i.lng]));
-    resEl._items = items;
-    showResults(items.map((it, i) =>
-      `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
-  } catch {
-    if (seq === searchSeq) showResults('<div class="label">ค้นหาไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง</div>');
+  const jobs = [st.longdoKey ? searchLongdo(q, c) : null, searchOSM(q, c)].filter(Boolean);
+  const done = await Promise.allSettled(jobs);
+  if (seq !== searchSeq) return;
+  const items = [];
+  for (const r of done) if (r.status === 'fulfilled') for (const it of r.value)
+    if (!items.some(x => haversine([x.lat, x.lng], [it.lat, it.lng]) < 60 && x.name === it.name)) items.push(it);
+  if (c) { items.forEach(i => i.d = haversine(c, [i.lat, i.lng])); items.sort((a, b) => a.d - b.d); }
+  if (!items.length) {
+    const failed = done.every(r => r.status === 'rejected');
+    return showResults(`<div class="label">${failed ? 'ค้นหาไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง' : 'ไม่พบสถานที่'}</div>
+      <div class="label">${st.longdoKey ? '' : 'ใส่ Longdo Map key ในตั้งค่าเพื่อให้หาสถานที่ในไทยเจอมากขึ้น · '}หรือค้นใน Google Maps แล้วแชร์ลิงก์มาวางที่ช่องค้นหา</div>`);
   }
+  resEl._items = items.slice(0, 15);
+  showResults(resEl._items.map((it, i) =>
+    `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
 };
+async function openGmapsLink(q) {
+  qEl.blur();
+  const url = /^https?:/i.test(q) ? q : 'https://' + q;
+  let d = parseGmaps(url);
+  if (!d) {
+    showResults('<div class="label">กำลังเปิดลิงก์ Google Maps…</div>');
+    try { const r = await nativeGet(url); d = parseGmaps(r.finalUrl || '') || parseGmaps(r.body || ''); } catch {}
+  }
+  if (!d) return showResults(`<div class="label">${native?.httpGet ? 'อ่านตำแหน่งจากลิงก์นี้ไม่ได้' : 'ลิงก์แบบย่อ (maps.app.goo.gl) เปิดได้ในแอป Android เท่านั้น บนเว็บให้เปิดลิงก์ใน Google Maps แล้วคัดลอกลิงก์เต็มจากแถบที่อยู่มาวาง'}</div>`);
+  pickDest(d);
+}
 resEl.addEventListener('click', e => {
   const b = e.target.closest('.ritem'); if (!b) return;
   const d = b.dataset.res != null ? resEl._items[+b.dataset.res] : st.recentDest[+b.dataset.recent];
@@ -1205,6 +1263,8 @@ async function repairApp() {
 }
 function settingsSheet() {
   openSheet(`<h2>ตั้งค่า</h2>
+    <label>Longdo Map key (ไม่บังคับ ช่วยให้หาสถานที่ในไทยเจอมากขึ้น)<input type="text" id="sLongdo" value="${esc(st.longdoKey)}" placeholder="รหัส 32 ตัวอักษร" autocapitalize="off" autocomplete="off"></label>
+    <div class="sub">ขอฟรีที่ map.longdo.com → เข้าสู่ระบบ → My Longdo Map → Longdo Map API → ใส่โดเมน <b>${esc(location.hostname)}</b></div>
     <label class="switch">เสียงนำทาง<input type="checkbox" id="sVoice" ${st.voice ? 'checked' : ''}></label>
     ${native?.mapsAdjacent ? `<label class="switch">ปุ่ม “เริ่มนำทาง” ใช้ Google Maps (เปิดแยกจอข้างๆ)<input type="checkbox" id="sGnav" ${st.navGoogle ? 'checked' : ''}></label>` : ''}
     <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
@@ -1218,6 +1278,7 @@ function settingsSheet() {
     s.querySelector('#sRepair').onclick = repairApp;
     s.querySelector('#sSave').onclick = () => {
       st.voice = s.querySelector('#sVoice').checked; st.autoNext = s.querySelector('#sNext').checked; st.ytKey = s.querySelector('#sKey').value.trim();
+      st.longdoKey = s.querySelector('#sLongdo').value.trim();
       if (s.querySelector('#sGnav')) st.navGoogle = s.querySelector('#sGnav').checked;
       save(); setVoiceIcon(); closeSheet(); toast('บันทึกแล้ว', 1500);
     };
@@ -1259,5 +1320,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, yt, instr, setRoute, webUrl, NO_FRAME, isoSecs, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, yt, instr, setRoute, webUrl, NO_FRAME, parseGmaps, isoSecs, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

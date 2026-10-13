@@ -94,6 +94,9 @@ async function newPage(viewport, extra = {}, init = null) {
     }
     if (u.includes('accounts.google.com/gsi/client')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB });
     if (u.includes('nominatim.openstreetmap.org')) { hit('nominatim'); return json(PLACES); }
+    if (u.includes('search.longdo.com')) { hit('longdo'); return json({ meta: {}, data: [
+      { type: 'poi', id: 'A1', name: 'ร้านกาแฟลับ ซอยสรณคมน์', lat: 13.7470, lon: 100.5345, address: 'ถนนสรณคมน์ กรุงเทพฯ' },
+      { type: 'poi', id: 'A2', name: 'เซ็นทรัลเวิลด์', lat: 13.7560, lon: 100.5400, address: 'ราชดำริ' }] }); }
     if (u.includes('youtube.com/iframe_api')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: YT_STUB });
     if (u.includes('pipedapi.kavin.rocks')) { hit('piped0'); return route.fulfill({ status: 502, body: 'down' }); }
     if (u.includes('api.piped.private.coffee')) {
@@ -344,6 +347,31 @@ console.log('Navigation');
     });
     assert.deepEqual(types, ['depart', 'roundabout', 'arrive']);
   });
+  await test('Longdo Map key adds Thai places, merged with OSM without duplicates', async () => {
+    await page.click('#rcClose').catch(() => {});
+    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    await page.fill('#sLongdo', 'abc123'); await page.click('#sSave');
+    await page.mouse.click(600, 600);
+    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
+    await page.waitForSelector('#results .ritem:has-text("ร้านกาแฟลับ")');
+    assert.equal(await page.locator('#results .ritem:has-text("เซ็นทรัลเวิลด์")').count(), 1, 'same place from both sources listed once');
+    const order = await page.$$eval('#results .ritem .dist', els => els.map(e => /กม/.test(e.textContent) ? parseFloat(e.textContent) * 1000 : parseFloat(e.textContent)));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b), 'nearest first');
+    await page.keyboard.press('Escape'); await page.mouse.click(600, 600);
+  });
+  await test('pasting a Google Maps link sets the destination', async () => {
+    const r = await page.evaluate(() => [
+      __car.parseGmaps('https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d13.746289!4d100.534878'),
+      __car.parseGmaps('https://maps.google.com/?q=13.7563,100.5018'),
+      __car.parseGmaps('https://www.google.com/maps/@13.7,100.5,15z'),
+      __car.parseGmaps('https://maps.app.goo.gl/AbCdEf')]);
+    assert.deepEqual([r[0].lat, r[0].lng, r[0].name], [13.746289, 100.534878, 'Siam Paragon'], 'exact pin (!3d!4d) wins over map centre');
+    assert.deepEqual([r[1].lat, r[1].lng], [13.7563, 100.5018]);
+    assert.deepEqual([r[2].lat, r[2].lng], [13.7, 100.5]);
+    assert.equal(r[3], null, 'short links need resolving');
+    await page.fill('#q', 'https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3d13.746289!4d100.534878'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Siam Paragon');
+  });
   await test('no console errors during navigation', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
@@ -581,6 +609,7 @@ console.log('Android app');
       mapsAdjacent: u => __native.push(['maps', u]),
       inSplitScreen: () => false,
       appVersion: () => 1,
+      httpGet: (id, u) => { __native.push(['http', u]); setTimeout(() => __http(id, 200, 'https://www.google.com/maps/place/Wat+Arun/@13.74,100.48,17z/data=!3d13.7437!4d100.4888', ''), 10); },
       update: (u, h) => __native.push(['update', u, h])
     };
   });
@@ -658,6 +687,12 @@ console.log('Android app');
     await page.evaluate(() => __appUpdate('error', 'ดาวน์โหลดไม่สำเร็จ (HTTP 500)'));
     assert.match(await page.textContent('#toast'), /ติดตั้งเองได้จาก .*car-screen\.apk/);
     await page.mouse.click(5, 5);
+  });
+  await test('short Google Maps links (maps.app.goo.gl) are resolved by the app', async () => {
+    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(300, 400);
+    await page.fill('#q', 'https://maps.app.goo.gl/AbCdEf'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Wat Arun');
+    assert.deepEqual(await last('http'), ['http', 'https://maps.app.goo.gl/AbCdEf']);
   });
   await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
   await ctx.close();

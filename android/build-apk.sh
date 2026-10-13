@@ -9,7 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 HERE=$(pwd)
-VC=${1:-$(git rev-list --count HEAD)}
+# each build must have a higher versionCode than the published one, or Android refuses the update
+PREV=$(python3 -c "import json;print(json.load(open('../dist/version.json'))['versionCode'])" 2>/dev/null || echo 0)
+VC=${1:-$((PREV + 1))}
 TOOLS=$HERE/.tools
 OUT=$HERE/../dist
 W=$(mktemp -d)
