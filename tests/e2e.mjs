@@ -301,6 +301,7 @@ console.log('YouTube');
     await page.waitForFunction(() => window.__yt?.calls.length);
     const c = await page.evaluate(() => __yt.calls[0]);
     assert.deepEqual(c, ['new', 'AAAAAAAAAAA', null, 'https://www.youtube-nocookie.com']);
+    assert.equal(await page.evaluate(() => __yt.players[0].o.playerVars.fs), 0, "YouTube's own fullscreen is off");
     assert.ok(await page.locator('#ytHost iframe').isVisible());
   });
   await test('video end → next video plays automatically', async () => {
@@ -328,6 +329,22 @@ console.log('YouTube');
     assert.ok(await page.locator('#yt').evaluate(e => e.classList.contains('list-open')));
   });
   await shot(page, '6-yt-playing');
+  await test('fullscreen button fills only the video pane, map stays visible', async () => {
+    await page.click('#ytFs');
+    const stage = await page.locator('#ytStage').boundingBox(), pane = await page.locator('#mediaPane').boundingBox();
+    assert.ok(Math.abs(stage.height - pane.height) < 2 && Math.abs(stage.width - pane.width) < 2, 'video fills its pane');
+    assert.ok(await vis(page, '#mapPane'), 'map still on screen');
+    assert.equal(await page.locator('#ytForm').evaluate(e => getComputedStyle(e).pointerEvents), 'none', 'top bar tucked away');
+    const r = await page.locator('#yt .reveal').boundingBox();
+    await page.mouse.click(r.x + r.width / 2, r.y + 5);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#ytForm')).opacity === '1');
+    await shot(page, '7-yt-pane-full');
+    await page.click('#ytFs');
+    assert.equal(await page.locator('#yt.theater').count(), 0);
+  });
+  await test('video frames are not allowed to go fullscreen over the map', async () => {
+    assert.doesNotMatch(await page.getAttribute('#webFrame', 'allow'), /fullscreen/);
+  });
   await test('API key search uses YouTube Data API', async () => {
     await page.click('#dockToggle'); await page.click('#settingsBtn');
     await page.fill('#sKey', 'AIzaTEST'); await page.click('#sSave');
@@ -348,8 +365,12 @@ console.log('Apps');
 {
   const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
   await test('Netflix opens in a new window', async () => {
-    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('.tile:has-text("Netflix")')]);
+    await page.click('.tile:has-text("Netflix")');
+    assert.match(await page.textContent('#sheet'), /แยกหน้าจอ/, 'explains why it opens separately');
+    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#extGo')]);
     assert.match(pop.url(), /netflix\.com/); await pop.close();
+    const [pop2] = await Promise.all([ctx.waitForEvent('page'), page.click('.tile:has-text("Netflix")')]);
+    assert.match(pop2.url(), /netflix\.com/, 'second time opens directly'); await pop2.close();
   });
   await test('add a custom app, open it inside, then delete it', async () => {
     await page.click('#addTile');

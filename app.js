@@ -12,7 +12,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', custom: [], recentDest: [], ytHistory: [], lastView: 'home' };
+const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 const save = () => store.set('carscreen', st);
 
@@ -563,6 +563,19 @@ function openExternal(url) {
   const a = Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener' });
   document.body.append(a); a.click(); a.remove();
 }
+// Netflix, Spotify and similar refuse to run inside another page, so they can only open as their own app/tab
+function openExtApp(a) {
+  if (st.extSeen?.includes(a.id || a.url)) return openExternal(a.url);
+  openSheet(`<h2>${esc(a.name)} เปิดในจอแบ่งไม่ได้</h2>
+    <div class="sub">${esc(a.name)} ไม่ยอมให้เว็บอื่นแสดงผลข้างใน (และใช้ระบบป้องกันลิขสิทธิ์) จึงต้องเปิดเป็นแอปหรือแท็บแยก ซึ่งจะเต็มจอทับแผนที่</div>
+    <div class="sub"><b>ถ้าอยากดูคู่กับแผนที่บน Android:</b> เปิด Car Screen กับแอป ${esc(a.name)} แล้วใช้ “แยกหน้าจอ” ของระบบ (กดปุ่มแอปล่าสุด → แตะไอคอนแอปด้านบน → แยกหน้าจอ) จากนั้นตั้ง Car Screen เป็น “แผนที่เต็มจอ” ในเมนู ⋯</div>
+    <div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn primary" id="extGo"><span class="ic" data-i="open"></span>เปิด ${esc(a.name)}</button></div>`, s => {
+    s.querySelector('#extGo').onclick = () => {
+      st.extSeen = [...(st.extSeen || []), a.id || a.url]; save();
+      closeSheet(); openExternal(a.url);
+    };
+  });
+}
 function renderTiles() {
   const all = [...APPS, ...st.custom.map((c, i) => ({ ...c, customIdx: i, color: '#2b3340', letter: (c.name[0] || '?').toUpperCase() }))];
   $('#tiles').innerHTML = all.map((a, i) => `
@@ -579,7 +592,7 @@ $('#tiles').addEventListener('click', e => {
   if (t.id === 'addTile') return addAppSheet();
   const a = $('#tiles')._all[+t.dataset.tile];
   if (a.view) return showView(a.view);
-  if (a.ext) return openExternal(a.url);
+  if (a.ext) return openExtApp(a);
   showView('web'); loadWeb(a.url);
 });
 $('#tiles').addEventListener('contextmenu', e => {
@@ -724,6 +737,17 @@ $('#ytList').addEventListener('click', e => {
 });
 function openList(on) { $('#yt').classList.toggle('list-open', on); }
 $('#ytListBtn').onclick = () => openList(!$('#yt').classList.contains('list-open'));
+function setTheater(on) {
+  const v = $('#yt'); v.classList.toggle('theater', on); v.classList.remove('peek');
+  setIcon($('#ytFs'), on ? 'fsx' : 'fs');
+}
+$('#ytFs').onclick = () => setTheater(!$('#yt').classList.contains('theater'));
+let peekT;
+$('#yt .reveal').addEventListener('pointerdown', () => {
+  if (!$('#yt').classList.contains('theater')) return;
+  $('#yt').classList.add('peek'); clearTimeout(peekT);
+  peekT = setTimeout(() => $('#yt').classList.remove('peek'), 4000);
+});
 
 function loadYTApi() {
   if (yt.apiReady) return yt.apiReady;
@@ -747,10 +771,11 @@ function ytPlayParsed(p) {
 
 async function ytPlay(v) {
   yt.cur = v;
-  $('#yt').classList.add('playing'); $('#ytStage').hidden = false; $('#ytErr').hidden = true; $('#ytListBtn').hidden = false;
+  $('#yt').classList.add('playing'); $('#ytStage').hidden = false; $('#ytErr').hidden = true; $('#ytListBtn').hidden = $('#ytFs').hidden = false;
   if (yt.queue.length > 1) renderList(yt.queue); else openList(false);
   if (v.id) addHistory(v);
-  const vars = { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, origin: location.origin, start: v.start || 0 };
+  // fs: 0 removes YouTube's own fullscreen, which would cover the map; #ytFs fills the pane instead
+  const vars = { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, fs: 0, origin: location.origin, start: v.start || 0 };
   try {
     await loadYTApi();
     if (yt.player && yt.player.loadVideoById) {
@@ -776,10 +801,10 @@ async function ytPlay(v) {
   } catch {
     // IFrame API unavailable: plain embed still plays
     yt.player = null;
-    const q = new URLSearchParams({ autoplay: 1, playsinline: 1, rel: 0 });
+    const q = new URLSearchParams({ autoplay: 1, playsinline: 1, rel: 0, fs: 0 });
     if (v.list) q.set('list', v.list);
     if (v.start) q.set('start', v.start);
-    $('#ytHost').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${v.id || 'videoseries'}?${q}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    $('#ytHost').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${v.id || 'videoseries'}?${q}" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
   }
 }
 function refreshTitle() {
