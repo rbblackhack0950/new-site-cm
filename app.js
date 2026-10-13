@@ -662,18 +662,66 @@ function navTick() {
 const media = { app: null, loaded: null, url: '', key: '' };
 const PALETTE = ['#3e6ae1', '#8e44ad', '#16a085', '#d35400', '#c0392b', '#2c3e50', '#b8860b', '#1f8a70'];
 const appColor = a => a.color || PALETTE[[...a.name].reduce((h, c) => h + c.charCodeAt(0), 0) % PALETTE.length];
-const appFace = a => a.icon ? svg(a.icon) : esc(a.letter || [...a.name][0]?.toUpperCase() || '?');
+const letterOf = a => esc(a.letter || [...a.name][0]?.toUpperCase() || '?');
+// a found logo covers the letter; if the image later fails to load, the letter shows again
+const appFace = a => a.icon ? svg(a.icon) : letterOf(a) + (a.logo ? `<img class="logo${a.logoFull ? ' full' : ''}" src="${esc(a.logo)}" alt="" referrerpolicy="no-referrer">` : '');
+const faceStyle = a => a.logo && !a.logoFull ? 'background:#fff' : `background:${appColor(a)}`;
+['#tiles', '#dock'].forEach(sel => $(sel).addEventListener('error', e => { if (e.target.matches?.('img.logo')) e.target.remove(); }, true));
+
+// ---------- Logos for added websites ----------
+// 1. the site's own app icon (apple-touch-icon / largest <link rel=icon>), read through the Android app
+// 2. Google's favicon service   3. otherwise the coloured letter stays
+function imgOk(src, min = 32) {
+  return new Promise(res => {
+    const i = new Image(), t = setTimeout(() => res(false), 8000);
+    i.referrerPolicy = 'no-referrer';
+    i.onload = () => { clearTimeout(t); res(i.naturalWidth >= min || /\.svg(\?|$)/i.test(src)); };
+    i.onerror = () => { clearTimeout(t); res(false); };
+    i.src = src;
+  });
+}
+async function findLogo(url) {
+  const origin = new URL(url).origin;
+  if (native?.httpGet) {
+    try {
+      const r = await nativeGet(origin + '/', 10000);
+      const base = r.finalUrl || origin + '/', html = (r.body || '').slice(0, 300000);
+      const attr = (tag, n) => (tag.match(new RegExp('\\b' + n + '\\s*=\\s*["\']([^"\']+)', 'i')) || [])[1];
+      const icons = [...html.matchAll(/<link\b[^>]*>/gi)].map(m => m[0])
+        .map(t => ({ rel: (attr(t, 'rel') || '').toLowerCase(), href: attr(t, 'href'), size: parseInt(attr(t, 'sizes') || '', 10) || 0 }))
+        .filter(c => c.href && /(^|\s)(apple-touch-icon(-precomposed)?|icon)(\s|$)/.test(c.rel))
+        .sort((a, b) => (/apple/.test(b.rel) - /apple/.test(a.rel)) || b.size - a.size);
+      const tries = [...icons.map(c => ({ src: new URL(c.href.replace(/&amp;/g, '&'), base).href, full: /apple/.test(c.rel) || c.size >= 120 })),
+        { src: origin + '/apple-touch-icon.png', full: true }];
+      for (const c of tries) if (await imgOk(c.src, c.full ? 96 : 32)) return c;
+    } catch {}
+  }
+  const g = `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(origin)}&size=128`;
+  if (await imgOk(g, 32)) return { src: g, full: false };
+  return null;
+}
+async function resolveLogo(a) {
+  if (!a.url || a.icon || DEFAULT_APPS.some(d => d.id === a.id)) return;
+  a.logoTried = Date.now();
+  const l = await findLogo(a.url).catch(() => null);
+  if (l) { a.logo = l.src; a.logoFull = l.full; }
+  save(); renderApps();
+}
+// apps added earlier: look once, and again a week after a miss
+async function resolveMissingLogos() {
+  for (const a of st.apps) if (!a.logo && a.url && !a.icon && !(Date.now() - (a.logoTried || 0) < 7 * 864e5)) await resolveLogo(a);
+}
 
 function renderApps() {
   $('#tiles').innerHTML = st.apps.map((a, i) => `
     <div class="tile" role="button" tabindex="0" data-app="${i}">
       <button class="del" data-del="${i}" aria-label="ลบ ${esc(a.name)}">${svg('close')}</button>
-      <div class="face" style="background:${appColor(a)}">${appFace(a)}</div>
+      <div class="face" style="${faceStyle(a)}">${appFace(a)}</div>
       <span>${esc(a.name)}</span>
     </div>`).join('') +
     `<div class="tile add" role="button" tabindex="0" id="addApp"><div class="face">${svg('add')}</div><span>เพิ่มแอป</span></div>`;
   $('#dock').innerHTML = st.apps.slice(0, 6).map((a, i) =>
-    `<button class="dock-app${media.app === a ? ' on' : ''}" data-app="${i}" aria-label="${esc(a.name)}" style="background:${appColor(a)}">${appFace(a)}</button>`).join('');
+    `<button class="dock-app${media.app === a ? ' on' : ''}" data-app="${i}" aria-label="${esc(a.name)}" style="${faceStyle(a)}">${appFace(a)}</button>`).join('');
 }
 function setEditing(on) {
   $('#home').classList.toggle('editing', on);
@@ -706,8 +754,10 @@ function addAppSheet() {
       let url = s.querySelector('#aUrl').value.trim(); if (!url) return toast('ใส่เว็บไซต์ก่อน');
       if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
       let host; try { host = new URL(url).hostname.replace(/^(www|m)\./, ''); } catch { return toast('เว็บไซต์ไม่ถูกต้อง'); }
-      st.apps.push({ id: 'c' + Date.now().toString(36), name: s.querySelector('#aName').value.trim() || host, url });
+      const a = { id: 'c' + Date.now().toString(36), name: s.querySelector('#aName').value.trim() || host, url };
+      st.apps.push(a);
       save(); renderApps(); closeSheet();
+      resolveLogo(a);
     };
   });
 }
@@ -857,6 +907,7 @@ if (!native) { body.classList.add('no-native'); $('#noNative').hidden = false; }
 paintIcons();
 applyLayout();
 renderApps();
+setTimeout(resolveMissingLogos, 4000);
 setVoiceIcon();
 optsBadge();
 tickClock();

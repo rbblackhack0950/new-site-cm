@@ -52,7 +52,7 @@ a{color:var(--accent)}
 .seg button.on{background:var(--raise);color:var(--fg)}
 .bar-apps{flex:1;min-width:0;display:flex;justify-content:center;gap:12px;overflow-x:auto;scrollbar-width:none}
 .bar-apps::-webkit-scrollbar{display:none}
-.dock-app{flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:700;font-size:18px;color:#fff;position:relative;opacity:.9}
+.dock-app{overflow:hidden;flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:700;font-size:18px;color:#fff;position:relative;opacity:.9}
 .dock-app svg[aria-hidden]{width:22px;height:22px}
 .dock-app.on{opacity:1}
 .dock-app.on::after{content:"";position:absolute;bottom:-7px;left:50%;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--fg)}
@@ -144,10 +144,12 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .home-head h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-.01em}
 .tiles{flex:1;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));align-content:start;gap:22px 12px;padding:18px 20px 24px}
 .tile{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;padding:6px 0;border-radius:18px}
-.tile .face{width:76px;height:76px;border-radius:22px;display:grid;place-items:center;font-size:30px;font-weight:700;color:#fff;transition:transform .12s}
+.tile .face{position:relative;overflow:hidden;width:76px;height:76px;border-radius:22px;display:grid;place-items:center;font-size:30px;font-weight:700;color:#fff;transition:transform .12s}
 .tile:active .face{transform:scale(.94)}
 .tile .face svg[aria-hidden]{width:36px;height:36px}
 .tile span{font-size:14px;color:#d1d1d6;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+img.logo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;padding:16%;background:#fff}
+img.logo.full{object-fit:cover;padding:0}
 .tile.add .face{background:transparent;border:2px dashed rgba(255,255,255,.18);color:var(--muted)}
 .tile .del{position:absolute;z-index:2;top:0;left:calc(50% - 46px);width:28px;height:28px;border-radius:50%;background:var(--raise);border:2px solid var(--surface);color:var(--fg);display:none;place-items:center}
 .tile .del svg[aria-hidden]{width:16px;height:16px}

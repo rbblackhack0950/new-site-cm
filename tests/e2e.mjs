@@ -43,7 +43,15 @@ function fakeApp(version) {
     load: u => rec('load', u), rect: (x, y, w, h, s) => rec('rect', Math.round(x), Math.round(y), Math.round(w), Math.round(h), s),
     stop: () => rec('stop'), back: () => rec('back'), external: u => rec('external', u),
     update: (u, h) => rec('update', u, h),
-    httpGet: (id, u) => { rec('http', u); setTimeout(() => __http(id, 200, 'https://www.google.com/maps/place/Wat+Arun/@13.74,100.48,17z/data=!3d13.7437!4d100.4888', ''), 10); }
+    // the app fetching pages for the web side: short Google Maps links and websites' HTML (for logos)
+    httpGet: (id, u) => {
+      rec('http', u);
+      const reply = (...a) => setTimeout(() => __http(id, ...a), 10);
+      if (u.includes('maps.app.goo.gl')) return reply(200, 'https://www.google.com/maps/place/Wat+Arun/@13.74,100.48,17z/data=!3d13.7437!4d100.4888', '');
+      if (u === 'https://joox.com/') return reply(200, 'https://www.joox.com/', '<html><head><link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" sizes="180x180" href="/touch-icon.png"></head></html>');
+      if (u.startsWith('https://plain.example') || u.startsWith('https://nologo.example')) return reply(200, u, '<html><head><title>x</title></head></html>');
+      reply(404, u, '');
+    }
   };
   if (version >= 21) Object.assign(n, {
     paneLoad: (id, u) => rec('paneLoad', id, u),
@@ -88,6 +96,9 @@ async function newPage(viewport, { app = 21, ...extra } = {}) {
     const u = route.request().url(); const hit = k => (counts[k] = (counts[k] || 0) + 1);
     const json = b => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
     if (u.includes('tile.openstreetmap.org')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+    const svgIcon = n => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}"><rect width="${n}" height="${n}" fill="#0a84ff"/></svg>` });
+    if (u === 'https://www.joox.com/touch-icon.png') return svgIcon(180);
+    if (u.includes('t1.gstatic.com/faviconV2') && u.includes('plain.example')) return svgIcon(64);
     if (u.includes('router.project-osrm.org')) {
       hit('osrm'); const ex = new URL(u).searchParams.get('exclude');
       if (ex) (counts.exclude = counts.exclude || []).push(ex);
@@ -424,9 +435,24 @@ console.log('Apps');
     await page.click('#sheet [data-close]');
     assert.equal(await page.locator('#tiles .tile:has-text("Netflix")').count(), 1);
   });
+  await test('added websites get their logo: app icon first, then favicon, else the letter', async () => {
+    await page.waitForSelector('#tiles .tile:has-text("Joox") img.logo.full');
+    assert.equal(await page.getAttribute('#tiles .tile:has-text("Joox") img.logo', 'src'), 'https://www.joox.com/touch-icon.png');
+    for (const [n, u] of [['Plain', 'plain.example'], ['NoLogo', 'nologo.example']]) {
+      await page.click('#addApp'); await page.fill('#aName', n); await page.fill('#aUrl', u); await page.click('#aSave');
+    }
+    await page.waitForSelector('#tiles .tile:has-text("Plain") img.logo:not(.full)');
+    assert.match(await page.getAttribute('#tiles .tile:has-text("Plain") img.logo', 'src'), /t1\.gstatic\.com\/faviconV2.*plain\.example/);
+    assert.equal(await page.locator('#tiles .tile:has-text("Plain") .face').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 255, 255)', 'small icons sit on white');
+    await page.waitForFunction(() => __car.st.apps.find(a => a.name === 'NoLogo')?.logoTried);
+    assert.equal(await page.locator('#tiles .tile:has-text("NoLogo") img').count(), 0);
+    assert.equal((await page.textContent('#tiles .tile:has-text("NoLogo") .face')).trim(), 'N', 'letter stays');
+    await shot(page, '9-logos');
+  });
   await test('apps survive a reload', async () => {
     await page.reload(); await page.waitForFunction(() => window.__car);
     assert.equal(await page.locator('#tiles .tile:has-text("Joox")').count(), 1);
+    assert.equal(await page.locator('#tiles .tile:has-text("Joox") img.logo').count(), 1, 'logo remembered');
   });
   await test('no console errors on the apps side', () => assert.deepEqual(errors, []));
   await ctx.close();
