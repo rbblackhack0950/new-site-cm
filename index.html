@@ -29,6 +29,23 @@
     </form>
     <div id="results" class="glass card list" hidden></div>
 
+    <!-- Google Maps tab (Android app 1.0.21+): a native browser view sits over #gmHost -->
+    <div id="gmPanel" hidden>
+      <div class="gm-bar">
+        <div class="seg gm-tabs" role="tablist">
+          <button id="gmToMap" role="tab">แผนที่</button>
+          <button class="on" role="tab" aria-selected="true">Google Maps</button>
+        </div>
+        <div id="gmTitle" class="grow title sub"></div>
+        <button id="gmX" class="btn ghost round" aria-label="ปิด Google Maps" data-i="close"></button>
+      </div>
+      <div id="gmHost"></div>
+      <div id="gmPick" class="gm-pick" hidden>
+        <div class="grow"><div class="sub">สถานที่ที่เลือก</div><div id="gmPickName" class="title"></div></div>
+        <button id="gmPickGo" class="btn primary"><span class="ic" data-i="nav"></span>ไปที่นี่</button>
+      </div>
+    </div>
+    <button id="gmTab" class="btn glass" hidden><span class="ic" data-i="search"></span>Google Maps</button>
     <div id="gmCard" class="glass card" hidden>
       <div class="rc-head">
         <div class="grow"><div class="sub">เลือกจาก Google Maps</div><div id="gmName" class="title"></div></div>

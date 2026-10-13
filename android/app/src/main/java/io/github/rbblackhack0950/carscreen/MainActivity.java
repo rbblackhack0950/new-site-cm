@@ -57,10 +57,9 @@ public class MainActivity extends Activity {
     static final String ACTION_INSTALL_STATUS = "io.github.rbblackhack0950.carscreen.INSTALL_STATUS";
 
     private WebView app;
-    private WebView pane;
-    private FrameLayout paneBox;
-    private View customView;
-    private WebChromeClient.CustomViewCallback customCb;
+    private FrameLayout root;
+    // 0 = media side (YouTube, Netflix, websites), 1 = Google Maps tab over the map side
+    private final Pane[] panes = new Pane[2];
     private GeolocationPermissions.Callback geoCb;
     private String geoOrigin;
     private volatile String userAgent; // read on the UI thread, used by background requests
@@ -78,14 +77,12 @@ public class MainActivity extends Activity {
             getWindow().setAttributes(wa);
         }
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#0c0d10"));
         app = new WebView(this);
         root.addView(app, new FrameLayout.LayoutParams(MATCH, MATCH));
-        paneBox = new FrameLayout(this);
-        paneBox.setBackgroundColor(Color.BLACK);
-        paneBox.setVisibility(View.GONE);
-        root.addView(paneBox, new FrameLayout.LayoutParams(0, 0));
+        panes[0] = new Pane("__paneUrl");
+        panes[1] = new Pane("__gmUrl");
         setContentView(root);
 
         setupApp();
@@ -158,85 +155,129 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ---------------------------------------------------------------- media pane
+    // ---------------------------------------------------------------- browser panes
 
-    private WebView pane() {
-        if (pane != null) return pane;
-        pane = new WebView(this);
-        commonSettings(pane.getSettings());
-        CookieManager.getInstance().setAcceptThirdPartyCookies(pane, true);
+    /** A native browser view laid over part of the web app (x, y, w, h are the web app's CSS pixels). */
+    final class Pane {
+        final FrameLayout box;
+        final String urlCallback;
+        WebView web;
+        View customView;
+        WebChromeClient.CustomViewCallback customCb;
 
-        pane.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                String scheme = r.getUrl().getScheme();
-                if ("http".equals(scheme) || "https".equals(scheme)) return false;
-                // "open in app" links (intent://, vnd.youtube:, ...) stay out: use the web fallback if there is one
-                if ("intent".equals(scheme)) {
-                    try {
-                        Intent i = Intent.parseUri(r.getUrl().toString(), Intent.URI_INTENT_SCHEME);
-                        String fallback = i.getStringExtra("browser_fallback_url");
-                        if (fallback != null) v.loadUrl(fallback);
-                    } catch (Exception ignored) {
+        Pane(String urlCallback) {
+            this.urlCallback = urlCallback;
+            box = new FrameLayout(MainActivity.this);
+            box.setBackgroundColor(Color.BLACK);
+            box.setVisibility(View.GONE);
+            root.addView(box, new FrameLayout.LayoutParams(0, 0));
+        }
+
+        WebView web() {
+            if (web != null) return web;
+            web = new WebView(MainActivity.this);
+            commonSettings(web.getSettings());
+            CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+            web.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                    String scheme = r.getUrl().getScheme();
+                    if ("http".equals(scheme) || "https".equals(scheme)) return false;
+                    // "open in app" links (intent://, vnd.youtube:, ...) stay out: use the web fallback if there is one
+                    if ("intent".equals(scheme)) {
+                        try {
+                            Intent i = Intent.parseUri(r.getUrl().toString(), Intent.URI_INTENT_SCHEME);
+                            String fallback = i.getStringExtra("browser_fallback_url");
+                            if (fallback != null) v.loadUrl(fallback);
+                        } catch (Exception ignored) {
+                        }
                     }
+                    return true;
                 }
+
+                @Override
+                public void doUpdateVisitedHistory(WebView v, String url, boolean isReload) {
+                    app.evaluateJavascript("window." + urlCallback + " && window." + urlCallback + "(" + JSONObject.quote(url) + ")", null);
+                }
+            });
+            web.setWebChromeClient(new WebChromeClient() {
+                // a video's fullscreen button fills this pane only, never the rest of the screen
+                @Override
+                public void onShowCustomView(View view, CustomViewCallback cb) {
+                    hideCustomView();
+                    customView = view;
+                    customCb = cb;
+                    box.addView(view, new FrameLayout.LayoutParams(MATCH, MATCH));
+                }
+
+                @Override
+                public void onHideCustomView() {
+                    hideCustomView();
+                }
+
+                @Override
+                public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback cb) {
+                    cb.invoke(origin, hasLocation(), false); // lets Google Maps search around you
+                }
+
+                // DRM video (Netflix and similar)
+                @Override
+                public void onPermissionRequest(PermissionRequest req) {
+                    for (String res : req.getResources()) {
+                        if (PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID.equals(res)) {
+                            req.grant(new String[]{res});
+                            return;
+                        }
+                    }
+                    req.deny();
+                }
+            });
+            web.getSettings().setGeolocationEnabled(true);
+            box.addView(web, 0, new FrameLayout.LayoutParams(MATCH, MATCH));
+            return web;
+        }
+
+        void hideCustomView() {
+            if (customView == null) return;
+            box.removeView(customView);
+            customView = null;
+            if (customCb != null) customCb.onCustomViewHidden();
+            customCb = null;
+        }
+
+        void place(float x, float y, float w, float h, boolean show) {
+            float d = getResources().getDisplayMetrics().density;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) box.getLayoutParams();
+            lp.leftMargin = Math.round(x * d);
+            lp.topMargin = Math.round(y * d);
+            lp.width = Math.max(0, Math.round(w * d));
+            lp.height = Math.max(0, Math.round(h * d));
+            box.setLayoutParams(lp);
+            box.setVisibility(show && web != null && w > 0 && h > 0 ? View.VISIBLE : View.GONE);
+        }
+
+        void stop() {
+            hideCustomView();
+            if (web != null) web.loadUrl("about:blank");
+            box.setVisibility(View.GONE);
+        }
+
+        /** Back button: leave video fullscreen, then go back in this pane's history. */
+        boolean back() {
+            if (customView != null) {
+                hideCustomView();
                 return true;
             }
-
-            @Override
-            public void doUpdateVisitedHistory(WebView v, String url, boolean isReload) {
-                app.evaluateJavascript("window.__paneUrl && window.__paneUrl(" + JSONObject.quote(url) + ")", null);
+            if (web != null && box.getVisibility() == View.VISIBLE && web.canGoBack()) {
+                web.goBack();
+                return true;
             }
-        });
-        pane.setWebChromeClient(new WebChromeClient() {
-            // a video's fullscreen button fills the pane only, never the map side
-            @Override
-            public void onShowCustomView(View view, CustomViewCallback cb) {
-                hideCustomView();
-                customView = view;
-                customCb = cb;
-                paneBox.addView(view, new FrameLayout.LayoutParams(MATCH, MATCH));
-            }
-
-            @Override
-            public void onHideCustomView() {
-                hideCustomView();
-            }
-
-            // DRM video (Netflix and similar)
-            @Override
-            public void onPermissionRequest(PermissionRequest req) {
-                for (String res : req.getResources()) {
-                    if (PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID.equals(res)) {
-                        req.grant(new String[]{res});
-                        return;
-                    }
-                }
-                req.deny();
-            }
-        });
-        paneBox.addView(pane, 0, new FrameLayout.LayoutParams(MATCH, MATCH));
-        return pane;
+            return false;
+        }
     }
 
-    private void hideCustomView() {
-        if (customView == null) return;
-        paneBox.removeView(customView);
-        customView = null;
-        if (customCb != null) customCb.onCustomViewHidden();
-        customCb = null;
-    }
-
-    /** Lay the pane over the web app's media area; x, y, w, h are CSS pixels of the web app. */
-    private void placePane(float x, float y, float w, float h, boolean show) {
-        float d = getResources().getDisplayMetrics().density;
-        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) paneBox.getLayoutParams();
-        lp.leftMargin = Math.round(x * d);
-        lp.topMargin = Math.round(y * d);
-        lp.width = Math.max(0, Math.round(w * d));
-        lp.height = Math.max(0, Math.round(h * d));
-        paneBox.setLayoutParams(lp);
-        paneBox.setVisibility(show && pane != null && w > 0 && h > 0 ? View.VISIBLE : View.GONE);
+    private Pane pane(int id) {
+        return panes[id == 1 ? 1 : 0];
     }
 
     /** Called from the web app as window.CarScreenNative.* (runs off the UI thread). */
@@ -246,35 +287,42 @@ public class MainActivity extends Activity {
             return "1";
         }
 
+        // ---- pane by id: 0 = media side, 1 = Google Maps tab over the map ----
         @JavascriptInterface
-        public void load(final String url) {
+        public void paneLoad(final int id, final String url) {
             runOnUiThread(new Runnable() {
-                public void run() { pane().loadUrl(url); }
+                public void run() { pane(id).web().loadUrl(url); }
             });
         }
 
         @JavascriptInterface
-        public void rect(final float x, final float y, final float w, final float h, final boolean show) {
+        public void paneRect(final int id, final float x, final float y, final float w, final float h, final boolean show) {
             runOnUiThread(new Runnable() {
-                public void run() { placePane(x, y, w, h, show); }
+                public void run() { pane(id).place(x, y, w, h, show); }
             });
         }
+
+        @JavascriptInterface
+        public void paneStop(final int id) {
+            runOnUiThread(new Runnable() {
+                public void run() { pane(id).stop(); }
+            });
+        }
+
+        // ---- media side, kept for pages written for app 1.0.20 and earlier ----
+        @JavascriptInterface
+        public void load(String url) { paneLoad(0, url); }
+
+        @JavascriptInterface
+        public void rect(float x, float y, float w, float h, boolean show) { paneRect(0, x, y, w, h, show); }
+
+        @JavascriptInterface
+        public void stop() { paneStop(0); }
 
         @JavascriptInterface
         public void back() {
             runOnUiThread(new Runnable() {
-                public void run() { if (pane != null && pane.canGoBack()) pane.goBack(); }
-            });
-        }
-
-        @JavascriptInterface
-        public void stop() {
-            runOnUiThread(new Runnable() {
-                public void run() {
-                    hideCustomView();
-                    if (pane != null) pane.loadUrl("about:blank");
-                    paneBox.setVisibility(View.GONE);
-                }
+                public void run() { pane(0).back(); }
             });
         }
 
@@ -500,10 +548,8 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (customView != null) {
-            hideCustomView();
-        } else if (pane != null && paneBox.getVisibility() == View.VISIBLE && pane.canGoBack()) {
-            pane.goBack();
+        if (panes[1].back() || panes[0].back()) {
+            return;
         } else if (app.canGoBack()) {
             app.goBack();
         } else {

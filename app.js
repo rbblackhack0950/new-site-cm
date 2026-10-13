@@ -437,11 +437,58 @@ async function openGmapsLink(q) {
 // In the Android app Google Maps opens in the right-hand pane; when a place is opened there,
 // its pin arrives through __paneUrl and a card offers to navigate to it.
 let gmWatch = false, gmPlace = null;
+// Android app 1.0.21+ has a second browser view, so Google Maps opens as a tab over the map side
+// and the right side keeps playing. Older apps fall back to the right-hand pane.
+const gm = { open: false, shown: false, place: null, key: '' };
+const gmTabbed = () => !!native?.paneLoad;
+function gmShow(on) {
+  gm.shown = on;
+  $('#gmPanel').hidden = !on;
+  $('#gmTab').hidden = on || !gm.open;
+  syncGm();
+}
+function gmClose() {
+  if (!gm.open) return;
+  gm.open = false; gm.place = null; $('#gmPick').hidden = true;
+  gmShow(false);
+  try { native.paneStop(1); } catch {}
+}
+function syncGm() {
+  if (!gmTabbed()) return;
+  const r = $('#gmHost').getBoundingClientRect();
+  const show = gm.open && gm.shown && st.mode !== 'media' && $('#sheetWrap').hidden && $('#dockBar').hidden && r.width > 0;
+  const key = [r.left, r.top, r.width, r.height].map(Math.round).join() + show;
+  if (key === gm.key) return;
+  gm.key = key;
+  try { native.paneRect(1, r.left, r.top, r.width, r.height, show); } catch {}
+}
+window.__gmUrl = url => {
+  if (!gm.open || !/\/maps\/place\//.test(url || '')) return;
+  const d = parseGmaps(url);
+  if (!d || !/!3d/.test(url) && !d.name) return;
+  gm.place = d;
+  $('#gmPickName').textContent = d.name;
+  $('#gmPick').hidden = false;
+  syncGm();
+};
+$('#gmPickGo').onclick = () => { const d = gm.place; gmClose(); if (d) pickDest(d); };
+$('#gmToMap').onclick = () => gmShow(false);
+$('#gmTab').onclick = () => gmShow(true);
+$('#gmX').onclick = gmClose;
+
 function gmapsSearch(q) {
   const c = here.ll || (map ? [map.getCenter().lat, map.getCenter().lng] : [13.7563, 100.5018]);
   const url = `https://www.google.com/maps/search/${encodeURIComponent(q)}/@${c[0]},${c[1]},14z`;
   showResults(''); qEl.blur();
   if (!native) return openExternal(url);
+  if (st.mode === 'media') { st.mode = 'split'; save(); applyLayout(); }
+  if (gmTabbed()) {
+    gm.open = true; gm.place = null;
+    $('#gmTitle').textContent = q; $('#gmPick').hidden = true;
+    gmShow(true);
+    native.paneLoad(1, url);
+    return;
+  }
   gmWatch = true;
   if (st.mode !== 'split') { st.mode = 'split'; save(); applyLayout(); }
   showView('web'); paneLoad(url);
@@ -469,6 +516,7 @@ resEl.addEventListener('click', e => {
 const nav = { dest: null, route: null, active: false, line: [], cum: [], stepAt: [], seg: 0, step: 1, said: {}, off: 0, lastReroute: 0, routing: false };
 
 function pickDest(d) {
+  gmClose();
   showResults(''); qEl.value = d.name; $('#qClear').hidden = false;
   nav.dest = d;
   st.recentDest = [d, ...st.recentDest.filter(x => Math.abs(x.lat - d.lat) + Math.abs(x.lng - d.lng) > 1e-5)].slice(0, 8).map(({ lat, lng, name, sub }) => ({ lat, lng, name, sub }));
@@ -638,6 +686,7 @@ function setVoiceIcon() { setIcon($('#nfVoice'), st.voice ? 'vol' : 'mute'); }
 $('#nfVoice').onclick = () => { st.voice = !st.voice; save(); setVoiceIcon(); if (!st.voice) speechSynthesis?.cancel(); toast(st.voice ? 'เปิดเสียงนำทาง' : 'ปิดเสียงนำทาง', 1500); };
 
 function startNav() {
+  gmClose();
   nav.active = true; nav.said = {};
   $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
   $('#mapPane').classList.add('navigating');
@@ -757,7 +806,7 @@ function syncPane() {
   try { native.rect(r.left, r.top, r.width, r.height, show); } catch {}
 }
 window.__paneUrl = url => { if (!url || url === 'about:blank') return; paneUrl = url; $('#webQ').value = url; $('#webFrame').dataset.url = url; onPaneUrl(url); };
-if (native) { body.classList.add('native'); setInterval(syncPane, 120); }
+if (native) { body.classList.add('native'); setInterval(() => { syncPane(); syncGm(); }, 120); }
 
 // ---------- Android app updates: compare the installed APK with dist/version.json ----------
 // (the screens and features load from the web, so they update by themselves; this is for the APK shell)

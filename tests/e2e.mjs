@@ -641,6 +641,70 @@ console.log('Startup problems');
   }
 }
 
+// ---------- Android app 1.0.21+: Google Maps as a tab over the map ----------
+console.log('Google Maps tab');
+{
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 }, {}, () => {
+    window.__native = [];
+    const rec = (...a) => __native.push(a);
+    window.CarScreenNative = {
+      version: () => '1', appVersion: () => 99, inSplitScreen: () => false,
+      load: u => rec('load', u), rect: () => {}, stop: () => rec('stop'), back: () => {}, external: u => rec('external', u),
+      paneLoad: (id, u) => rec('paneLoad', id, u),
+      paneRect: (id, x, y, w, h, show) => rec('paneRect', id, Math.round(x), Math.round(y), Math.round(w), Math.round(h), show),
+      paneStop: id => rec('paneStop', id)
+    };
+  });
+  const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
+  const lastRect = id => page.evaluate(i => __native.filter(c => c[0] === 'paneRect' && c[1] === i).at(-1), id);
+  await page.click('.tile:has-text("เว็บ")');
+  await page.fill('#webQ', 'example.com'); await page.press('#webQ', 'Enter'); // something playing on the right
+  await page.mouse.click(300, 400);
+  await test('Google Maps search opens as a tab over the map, right side untouched', async () => {
+    await page.fill('#q', 'ร้านข้าวมันไก่'); await page.press('#q', 'Enter');
+    await page.click('#results [data-gsearch]');
+    assert.equal((await last('paneLoad'))[1], 1, 'second browser view');
+    assert.match((await last('paneLoad'))[2], /google\.com\/maps\/search\//);
+    assert.ok(await vis(page, '#gmPanel'));
+    await page.waitForTimeout(300);
+    const r = await lastRect(1), h = await page.locator('#gmHost').boundingBox(), m = await page.locator('#mapPane').boundingBox();
+    assert.deepEqual(r.slice(2, 6), [h.x, h.y, h.width, h.height].map(Math.round), 'Google Maps covers the map side');
+    assert.ok(h.x + h.width <= m.x + m.width + 1, 'stays inside the map side');
+    assert.equal(r[6], true);
+    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'load').length), 1, 'media side not reloaded');
+  });
+  await test('tabs switch between the map and Google Maps', async () => {
+    await page.click('#gmToMap'); await page.waitForTimeout(250);
+    assert.equal((await lastRect(1))[6], false, 'Google Maps hidden on the map tab');
+    assert.ok(await vis(page, '#gmTab'));
+    await page.click('#gmTab'); await page.waitForTimeout(250);
+    assert.equal((await lastRect(1))[6], true);
+  });
+  await test('choosing a place shows ไปที่นี่; pressing it closes Google Maps and routes there', async () => {
+    await page.evaluate(() => __gmUrl('https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!3d13.7512!4d100.5321'));
+    assert.ok(await vis(page, '#gmPick'));
+    assert.equal(await page.textContent('#gmPickName'), 'ป้าแดง');
+    await page.click('#gmPickGo');
+    assert.deepEqual(await last('paneStop'), ['paneStop', 1]);
+    assert.equal(await vis(page, '#gmPanel'), false);
+    assert.equal(await vis(page, '#gmTab'), false);
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ป้าแดง');
+  });
+  await test('starting navigation also closes an open Google Maps tab', async () => {
+    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
+    await page.click('#results [data-gsearch]');
+    await page.click('#gmToMap');
+    const n = await page.evaluate(() => __native.filter(c => c[0] === 'paneStop').length);
+    await page.waitForFunction(() => /กม\.|ม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcGo');
+    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'paneStop').length), n + 1);
+    assert.equal(await vis(page, '#gmTab'), false);
+  });
+  await shot(page, '11-gm-tab');
+  await test('no console errors with the Google Maps tab', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
 // ---------- Android app bridge (native side faked) ----------
 console.log('Android app');
 {
