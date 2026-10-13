@@ -19,3 +19,12 @@
 npm test            # Chromium จริง, จำลองบริการภายนอกทั้งหมด
 SHOTS=out npm test  # บันทึกภาพหน้าจอ
 ```
+
+## แอป Android (APK)
+`android/` คือแอป Android ที่เปิด Car Screen ทั้งจอ และวางหน้าต่างเบราว์เซอร์จริงไว้ตรงฝั่งแอป
+จึงเปิดเว็บที่ไม่ยอมให้ฝังได้ (m.youtube.com, Netflix, Facebook ฯลฯ) และวิดีโอเต็มจอได้เฉพาะในฝั่งนั้น
+
+GitHub Actions build ให้ทุกครั้งที่แก้ `android/` แล้วอัปโหลดไว้ที่
+https://github.com/rbblackhack0950/new-site-cm/releases/download/android-latest/car-screen.apk
+
+กุญแจเซ็นแอป (`android/carscreen.keystore`) เปิดเผยใน repo เพื่อให้ APK ใหม่ติดตั้งทับตัวเก่าได้ ใช้สำหรับติดตั้งเองเท่านั้น

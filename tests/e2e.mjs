@@ -62,7 +62,7 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log('  ✓', name); }
   catch (e) { failed++; if (SHOTS && globalThis.__pg) await globalThis.__pg.screenshot({ path: path.join(SHOTS, 'fail-' + name.replace(/\W+/g, '_').slice(0, 30) + '.png') }).catch(() => {}); console.log('  ✗', name, '\n    ', e.message.split('\n').filter((l, i) => i < 8 || /intercepts|not visible|not stable|outside/.test(l)).slice(0, 8).join('\n     ')); }
 }
-async function newPage(viewport, extra = {}) {
+async function newPage(viewport, extra = {}, init = null) {
   const ctx = await browser.newContext({ viewport, geolocation: { latitude: A[0], longitude: A[1], accuracy: 8 }, permissions: ['geolocation'], locale: 'th-TH', ...extra });
   // headless Chromium does not push setGeolocation() changes to watchPosition, so drive GPS from the test
   await ctx.addInitScript(([lat, lng]) => {
@@ -75,6 +75,7 @@ async function newPage(viewport, extra = {}) {
     } });
     window.__setPos = (lat, lng, speed) => { last = mk(lat, lng, speed); cbs.forEach(f => f(last)); };
   }, A);
+  if (init) await ctx.addInitScript(init);
   const page = await ctx.newPage();
   page.setDefaultTimeout(5000);
   globalThis.__pg = page;
@@ -539,6 +540,58 @@ console.log('Apps');
     assert.ok(await page.evaluate(() => __car.st.extSeen.includes('netflix')), 'settings kept');
   });
   await test('no console errors in apps', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
+// ---------- Android app bridge (native side faked) ----------
+console.log('Android app');
+{
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 }, {}, () => {
+    window.__native = [];
+    window.CarScreenNative = {
+      version: () => '1',
+      load: u => __native.push(['load', u]),
+      rect: (x, y, w, h, show) => __native.push(['rect', Math.round(x), Math.round(y), Math.round(w), Math.round(h), show]),
+      back: () => __native.push(['back']), stop: () => __native.push(['stop']),
+      external: u => __native.push(['external', u])
+    };
+  });
+  const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
+  await test('YouTube tile opens the real m.youtube.com in the pane', async () => {
+    await page.click('.tile:has-text("YouTube")');
+    assert.deepEqual(await last('load'), ['load', 'https://m.youtube.com']);
+    await page.waitForFunction(() => __native.some(c => c[0] === 'rect' && c[5] === true));
+    const r = await last('rect'), f = await page.locator('#webFrame').boundingBox();
+    assert.deepEqual(r.slice(1, 5), [f.x, f.y, f.width, f.height].map(Math.round), 'native view sits exactly over the pane');
+  });
+  await test('pane follows the divider and hides under menus', async () => {
+    const d = await page.locator('#divider').boundingBox();
+    await page.mouse.move(d.x + d.width / 2, d.y + 100); await page.mouse.down(); await page.mouse.move(400, d.y + 100, { steps: 4 }); await page.mouse.up();
+    await page.waitForTimeout(300);
+    const f = await page.locator('#webFrame').boundingBox();
+    assert.equal((await last('rect'))[1], Math.round(f.x));
+    await page.click('#dockToggle'); await page.waitForTimeout(300);
+    assert.equal((await last('rect'))[5], false, 'hidden while the menu is open');
+    await page.mouse.click(5, 400); await page.waitForTimeout(300);
+    assert.equal((await last('rect'))[5], true);
+  });
+  await test('Netflix and Facebook load in the pane, no "open in Chrome"', async () => {
+    await page.click('#web .homeBtn'); await page.waitForTimeout(250);
+    assert.equal((await last('rect'))[5], false, 'hidden on the app grid');
+    await page.click('.tile:has-text("Netflix")');
+    assert.deepEqual(await last('load'), ['load', 'https://www.netflix.com/browse']);
+    assert.equal(await vis(page, '#sheetWrap'), false);
+    await page.fill('#webQ', 'facebook.com'); await page.press('#webQ', 'Enter');
+    assert.deepEqual(await last('load'), ['load', 'https://facebook.com']);
+    assert.equal(await vis(page, '#webMsg'), false);
+  });
+  await test('page URL from the pane shows in the address bar; ↗ and Maps open outside', async () => {
+    await page.evaluate(() => __paneUrl('https://m.facebook.com/home.php'));
+    assert.equal(await page.inputValue('#webQ'), 'https://m.facebook.com/home.php');
+    await page.click('#webPop');
+    assert.deepEqual(await last('external'), ['external', 'https://m.facebook.com/home.php']);
+  });
+  await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
 

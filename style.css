@@ -150,6 +150,7 @@ body.idle #yt.playing .topbar{opacity:1;pointer-events:auto;transform:none}
 .overlay{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;background:rgba(10,11,13,.92)}
 #webFrame{flex:1;width:100%;border:0;background:#fff;margin-top:64px}
 .web-msg{top:64px;background:var(--pane)}
+body.native #webFrame{background:var(--pane)}
 .web-msg h3{margin:0;font-size:17px}
 .web-msg .row{flex-wrap:wrap;justify-content:center}
 

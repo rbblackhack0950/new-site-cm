@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+// every CI build gets a higher version so the APK installs as an update
+def buildNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
+android {
+    namespace 'io.github.rbblackhack0950.carscreen'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.rbblackhack0950.carscreen'
+        minSdk 26
+        targetSdk 34
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
+    }
+
+    // One fixed key for sideloaded builds, so each new APK can update the installed one.
+    // It is public in this repo: fine for a personal sideloaded app, never use it for the Play Store.
+    signingConfigs {
+        sideload {
+            storeFile file('../carscreen.keystore')
+            storePassword 'carscreen'
+            keyAlias 'carscreen'
+            keyPassword 'carscreen'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.sideload }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.sideload
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}

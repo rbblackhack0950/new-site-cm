@@ -628,7 +628,32 @@ const APPS = [
   { id: 'gmaps', name: 'Google Maps', color: '#1a73e8', icon: 'map', url: 'https://www.google.com/maps', ext: true }
 ];
 // a real link click: works under popup blockers and never navigates the app itself away
+// ---------- Android app (android/): a native browser view laid over the media pane ----------
+// Inside the app, window.CarScreenNative exists and any site (m.youtube.com, Netflix, Facebook)
+// can be shown in the pane, because the "no embedding" rule only applies to pages inside pages.
+const native = window.CarScreenNative || null;
+let paneUrl = '', paneKey = '';
+function paneLoad(url) {
+  paneUrl = url;
+  $('#webFrame').removeAttribute('src'); $('#webFrame').dataset.url = url;
+  $('#webQ').value = url; webMsg('');
+  native.load(url); syncPane();
+}
+// keep the native view exactly over the pane, and out of the way of menus and sheets
+function syncPane() {
+  if (!native) return;
+  const r = $('#webFrame').getBoundingClientRect();
+  const show = !!paneUrl && !$('#web').hidden && st.mode !== 'map' && $('#sheetWrap').hidden && $('#dockBar').hidden && r.width > 0;
+  const key = [r.left, r.top, r.width, r.height].map(Math.round).join() + show;
+  if (key === paneKey) return;
+  paneKey = key;
+  try { native.rect(r.left, r.top, r.width, r.height, show); } catch {}
+}
+window.__paneUrl = url => { if (!url || url === 'about:blank') return; paneUrl = url; $('#webQ').value = url; $('#webFrame').dataset.url = url; };
+if (native) { body.classList.add('native'); setInterval(syncPane, 120); }
+
 function openExternal(url) {
+  if (native) return native.external(url);
   const a = Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener' });
   document.body.append(a); a.click(); a.remove();
 }
@@ -639,11 +664,13 @@ const webUrl = (url, android = isAndroid) => android
   ? `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`
   : url;
 function openWeb(url) {
+  if (native) { showView('web'); return loadWeb(url); }
   if (isAndroid) location.href = webUrl(url); // launches Chrome; this page stays put
   else openExternal(url);
 }
 // Netflix, Spotify and similar refuse to run inside another page, so they open as a website in the browser
 function openExtApp(a) {
+  if (native) { showView('web'); return loadWeb(a.url); }
   if (st.extSeen?.includes(a.id || a.url)) return openWeb(a.url);
   openSheet(`<h2>${esc(a.name)} จะเปิดเป็นเว็บไซต์ในเบราว์เซอร์</h2>
     <div class="sub">${esc(a.name)} ไม่ยอมให้เว็บอื่นแสดงผลข้างใน จึงแสดงในฝั่งนี้ไม่ได้ Car Screen จะเปิดเว็บ ${esc(a.name)} ใน Chrome แทนการเปิดแอป</div>
@@ -671,6 +698,8 @@ $('#tiles').addEventListener('click', e => {
   const t = e.target.closest('.tile'); if (!t) return;
   if (t.id === 'addTile') return addAppSheet();
   const a = $('#tiles')._all[+t.dataset.tile];
+  // in the Android app YouTube is the real m.youtube.com, with your account, Shorts and comments
+  if (native && a.id === 'youtube') { showView('web'); return loadWeb('https://m.youtube.com'); }
   if (a.view) return showView(a.view);
   if (a.ext) return openExtApp(a);
   showView('web'); loadWeb(a.url);
@@ -704,7 +733,7 @@ function showView(v) {
   ['home', 'yt', 'web'].forEach(id => $('#' + id).hidden = id !== v);
   st.lastView = v; save();
   if (v === 'yt') ytShowIdle();
-  if (v === 'web' && !$('#webFrame').getAttribute('src') && $('#webMsg').hidden) { webHome(); setTimeout(() => $('#webQ').focus(), 50); }
+  if (v === 'web' && !$('#webFrame').getAttribute('src') && !paneUrl && $('#webMsg').hidden) { webHome(); setTimeout(() => $('#webQ').focus(), 50); }
   if (v !== 'yt') { yt.player?.pauseVideo?.(); setTheater(false); }
 }
 $$('.homeBtn').forEach(b => b.onclick = () => showView('home'));
@@ -719,10 +748,11 @@ function webMsg(html) { const m = $('#webMsg'); m.hidden = !html; m.innerHTML = 
 function loadWeb(input) {
   input = (input || '').trim(); if (!input) return;
   const v = ytParse(input);
-  if (v) { showView('yt'); return ytPlayParsed(v); }
+  if (v && !native) { showView('yt'); return ytPlayParsed(v); }
   // words rather than an address: search Google inside the pane
   const looksLikeUrl = /^https?:\/\//i.test(input) || (/^[^\s]+\.[a-z]{2,}(\/|$|\?|:)/i.test(input) && !/\s/.test(input));
   const url = looksLikeUrl ? (/^https?:\/\//i.test(input) ? input : 'https://' + input) : googleSearch(input);
+  if (native) return paneLoad(url.replace('?igu=1&', '?'));
   let host = ''; try { host = new URL(url).hostname; } catch {}
   $('#webQ').value = looksLikeUrl ? url : input; $('#webQ').blur();
   if (NO_FRAME.test(host) && !/[?&]igu=1/.test(url)) {
@@ -747,7 +777,7 @@ function webHome() {
 }
 $('#webMsg').addEventListener('click', e => { const b = e.target.closest('[data-web]'); if (b) loadWeb(b.dataset.web); });
 $('#webForm').onsubmit = e => { e.preventDefault(); loadWeb($('#webQ').value.trim()); };
-$('#webPop').onclick = () => { const u = $('#webFrame').dataset.url || $('#webQ').value.trim(); if (u) openWeb(/^https?:/i.test(u) ? u : googleSearch(u)); };
+$('#webPop').onclick = () => { const u = $('#webFrame').dataset.url || $('#webQ').value.trim(); if (!u) return; const url = /^https?:/i.test(u) ? u : googleSearch(u); native ? openExternal(url) : openWeb(url); };
 
 // ===================================================================
 // YouTube
@@ -1142,7 +1172,7 @@ let installEv = null;
 const standalone = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEv = e; $('#install').hidden = false; });
 addEventListener('appinstalled', () => { installEv = null; $('#install').hidden = true; toast('ติดตั้งแล้ว เปิดได้จากหน้าจอหลัก'); });
-if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) $('#install').hidden = false;
+if (!standalone && !native && /iphone|ipad|ipod/i.test(navigator.userAgent)) $('#install').hidden = false;
 $('#install').onclick = async () => {
   if (installEv) { installEv.prompt(); await installEv.userChoice; installEv = null; $('#install').hidden = true; }
   else toast('Safari: กดปุ่มแชร์ แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”', 6000);
