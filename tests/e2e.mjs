@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 let pw;
@@ -197,8 +198,8 @@ console.log('Startup problems');
   };
   {
     const { ctx, page } = await open({}, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
-    await test('a start-up error shows the real error, not "too old"', async () => {
-      await page.waitForSelector('#bootFail', { timeout: 5000 });
+    await test('a start-up error shows the real error, not "too old" (after one automatic repair)', async () => {
+      await page.waitForSelector('#bootFail', { timeout: 12000 });
       const t = await page.textContent('#bootFail');
       assert.match(t, /เกิดข้อผิดพลาดตอนเปิดแอป/); assert.doesNotMatch(t, /เก่าเกินไป/); assert.match(t, /ข้อผิดพลาด: .*app\.js:1/);
     });
@@ -753,6 +754,25 @@ console.log('Settings');
 }
 
 // ---------- older app & plain browser ----------
+console.log('Mixed releases');
+{
+  await test('page and script from different releases: repairs itself once, then explains', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 600 }, serviceWorkers: 'block' });
+    const page = await ctx.newPage();
+    let appHits = 0, caches = 0;
+    await ctx.route(/^https?:\/\/(?!localhost)/, r => r.fulfill({ status: 404, body: '' }));
+    await page.route('**/app.js*', async r => { appHits++; const res = await r.fetch(); await r.fulfill({ response: res, body: (await res.text()).replace(/const BUILD = \d+;/, 'const BUILD = 1;') }); });
+    await page.goto(BASE);
+    await page.waitForFunction(() => document.getElementById('bootFail'), null, { timeout: 15000 });
+    assert.ok(appHits >= 2, 'reloaded once by itself: ' + appHits);
+    assert.match(await page.textContent('#bootFail'), /คนละเวอร์ชัน/);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('carRepaired')), '1');
+    await ctx.close();
+  });
+  const src = readFileSync(path.join(ROOT, 'app.js'), 'utf8').match(/const BUILD = (\d+)/)[1], html = readFileSync(path.join(ROOT, 'index.html'), 'utf8').match(/__want = (\d+)/)[1];
+  await test('index.html and app.js name the same build', () => assert.equal(src, html));
+}
+
 console.log('Older app / browser');
 {
   const { page, ctx, errors, last } = await newPage({ width: 1280, height: 800 }, { app: 20 });

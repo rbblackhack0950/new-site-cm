@@ -1,6 +1,10 @@
 /* Car Screen — split screen map navigation + apps, built for the Car Screen Android app (android/). */
 (() => {
 'use strict';
+// index.html names the build it expects. A page from one release with a script from another (a stale cache
+// or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
+const BUILD = 31;
+if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const app = $('#app'), root = document.documentElement, body = document.body;

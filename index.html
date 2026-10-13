@@ -163,6 +163,7 @@
 // and "slow" when nothing has failed yet. The notice removes itself if the app starts after all.
 (function () {
   var errs = window.__bootErrs = [], t0 = Date.now(), shown = null;
+  window.__want = 31; // must equal BUILD in app.js
   addEventListener('error', function (e) {
     var el = e.target;
     if (el && el !== window && (el.src || el.href)) errs.push('โหลดไฟล์ไม่สำเร็จ: ' + (el.src || el.href).split('/').pop());
@@ -195,6 +196,10 @@
   var timer = setInterval(function () {
     var age = Date.now() - t0;
     if (window.__car) { if (shown) shown.parentNode.removeChild(shown); clearInterval(timer); return; }
+    // a start-up error is most often files from two releases mixed in the cache: repair once by itself
+    var tried = false; try { tried = sessionStorage.getItem('carRepaired'); } catch (e) {}
+    var cm = navigator.userAgent.match(/Chrome\/(\d+)/), tooOld = cm && +cm[1] < 85; // repairing cannot fix an old engine
+    if (!shown && errs.length && age > 1500 && !tried && !tooOld) { try { sessionStorage.setItem('carRepaired', '1'); } catch (e) {} clearInterval(timer); shown = {}; return repair(); }
     if (!shown && ((errs.length && age > 2500) || age > 25000)) shown = show();
     if (age > 120000) clearInterval(timer);
   }, 500);
