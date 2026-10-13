@@ -404,6 +404,8 @@ public class MainActivity extends Activity {
             c.setConnectTimeout(10000);
             c.setReadTimeout(15000);
             if (userAgent != null) c.setRequestProperty("User-Agent", userAgent);
+            // key-based services (Longdo) check the site the request comes from
+            c.setRequestProperty("Referer", "https://" + APP_HOST + "/");
             status = c.getResponseCode();
             finalUrl = c.getURL().toString();
             InputStream in = status < 400 ? c.getInputStream() : c.getErrorStream();
