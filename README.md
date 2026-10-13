@@ -24,7 +24,9 @@ SHOTS=out npm test  # บันทึกภาพหน้าจอ
 `android/` คือแอป Android ที่เปิด Car Screen ทั้งจอ และวางหน้าต่างเบราว์เซอร์จริงไว้ตรงฝั่งแอป
 จึงเปิดเว็บที่ไม่ยอมให้ฝังได้ (m.youtube.com, Netflix, Facebook ฯลฯ) และวิดีโอเต็มจอได้เฉพาะในฝั่งนั้น
 
-GitHub Actions build ให้ทุกครั้งที่แก้ `android/` แล้วอัปโหลดไว้ที่
-https://github.com/rbblackhack0950/new-site-cm/releases/download/android-latest/car-screen.apk
+ดาวน์โหลด: https://rbblackhack0950.github.io/new-site-cm/dist/car-screen.apk (หรือ ตั้งค่า → ดาวน์โหลดแอป Android)
+
+Build เองด้วย `android/build-apk.sh` (ไม่ต้องมี Android SDK หรือ Gradle) ได้ไฟล์ที่ `dist/car-screen.apk`
+ส่วน Gradle project ใน `android/` ใช้กับ Android Studio หรือ GitHub Actions (สั่งรันเอง) ได้เช่นกัน
 
 กุญแจเซ็นแอป (`android/carscreen.keystore`) เปิดเผยใน repo เพื่อให้ APK ใหม่ติดตั้งทับตัวเก่าได้ ใช้สำหรับติดตั้งเองเท่านั้น

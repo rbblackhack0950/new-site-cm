@@ -2,11 +2,8 @@
 # downloadable at https://github.com/rbblackhack0950/new-site-cm/releases/download/android-latest/car-screen.apk
 name: Android APK
 
+# Manual only: the APK is normally built with android/build-apk.sh and served from dist/.
 on:
-  push:
-    paths:
-      - 'android/**'
-      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 permissions:

@@ -1156,6 +1156,8 @@ function settingsSheet() {
     <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
     <label>YouTube API key (ไม่บังคับ ช่วยให้ค้นหาเสถียร)<input type="password" id="sKey" value="${esc(st.ytKey)}" placeholder="AIza…" autocapitalize="off" autocomplete="off"></label>
     <div class="sub">สร้างฟรีที่ Google Cloud Console → เปิด “YouTube Data API v3” → Credentials → API key</div>
+    ${native ? '' : `<div class="sub"><b>แอป Android:</b> เปิดได้ทุกเว็บในฝั่งแอป รวมถึง m.youtube.com, Netflix, Facebook</div>
+    <a class="btn" id="sApk" href="dist/car-screen.apk" download="car-screen.apk"><span class="ic" data-i="dl"></span>ดาวน์โหลดแอป Android (APK)</a>`}
     <div class="sub">แอปที่ติดตั้งเปิดไม่ขึ้นหรือไม่อัปเดต: กด “ซ่อมแอป” เพื่อล้างแคชแล้วโหลดใหม่ (การตั้งค่าและประวัติยังอยู่)</div>
     <div class="row"><button class="btn" id="sRepair">ซ่อมแอป</button><button class="btn" id="sReset">รีเซ็ตหน้าจอ</button><button class="btn primary" id="sSave">บันทึก</button></div>`, s => {
     s.querySelector('#sRepair').onclick = repairApp;

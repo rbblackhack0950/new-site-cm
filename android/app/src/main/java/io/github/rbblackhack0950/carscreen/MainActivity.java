@@ -1,7 +1,6 @@
 package io.github.rbblackhack0950.carscreen;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -54,6 +54,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         FrameLayout root = new FrameLayout(this);
@@ -73,7 +75,6 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- web app
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     private void setupApp() {
         WebSettings s = app.getSettings();
         commonSettings(s);
@@ -138,7 +139,6 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- media pane
 
-    @SuppressLint("SetJavaScriptEnabled")
     private WebView pane() {
         if (pane != null) return pane;
         pane = new WebView(this);
@@ -226,34 +226,42 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void load(String url) {
-            runOnUiThread(() -> pane().loadUrl(url));
+        public void load(final String url) {
+            runOnUiThread(new Runnable() {
+                public void run() { pane().loadUrl(url); }
+            });
         }
 
         @JavascriptInterface
-        public void rect(float x, float y, float w, float h, boolean show) {
-            runOnUiThread(() -> placePane(x, y, w, h, show));
+        public void rect(final float x, final float y, final float w, final float h, final boolean show) {
+            runOnUiThread(new Runnable() {
+                public void run() { placePane(x, y, w, h, show); }
+            });
         }
 
         @JavascriptInterface
         public void back() {
-            runOnUiThread(() -> {
-                if (pane != null && pane.canGoBack()) pane.goBack();
+            runOnUiThread(new Runnable() {
+                public void run() { if (pane != null && pane.canGoBack()) pane.goBack(); }
             });
         }
 
         @JavascriptInterface
         public void stop() {
-            runOnUiThread(() -> {
-                hideCustomView();
-                if (pane != null) pane.loadUrl("about:blank");
-                paneBox.setVisibility(View.GONE);
+            runOnUiThread(new Runnable() {
+                public void run() {
+                    hideCustomView();
+                    if (pane != null) pane.loadUrl("about:blank");
+                    paneBox.setVisibility(View.GONE);
+                }
             });
         }
 
         @JavascriptInterface
-        public void external(String url) {
-            runOnUiThread(() -> openExternal(url));
+        public void external(final String url) {
+            runOnUiThread(new Runnable() {
+                public void run() { openExternal(url); }
+            });
         }
     }
 

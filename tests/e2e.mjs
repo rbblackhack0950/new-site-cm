@@ -531,6 +531,14 @@ console.log('Apps');
     const sw = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
     assert.match(sw, /sw\.js$/);
   });
+  await test('settings offer the Android app download, and the file is served', async () => {
+    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    assert.equal(await page.getAttribute('#sApk', 'href'), 'dist/car-screen.apk');
+    const r = await page.request.get(BASE + 'dist/car-screen.apk');
+    assert.equal(r.status(), 200);
+    assert.equal((await r.body()).subarray(0, 2).toString(), 'PK', 'it is a zip/APK');
+    await page.click('#sheet [data-close], #sheet .btn:has-text("รีเซ็ตหน้าจอ")');
+  });
   await test('repair app clears caches and reloads, keeping settings', async () => {
     await page.evaluate(() => caches.open('junk').then(c => c.put('/x', new Response('x'))));
     await page.click('#dockToggle'); await page.click('#settingsBtn');
