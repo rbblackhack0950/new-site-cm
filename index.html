@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Car Screen</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="split">
+  <section id="paneA" class="pane">
+    <header class="bar">
+      <form id="mapForm" class="grow">
+        <input id="mapQ" type="search" placeholder="ค้นหาสถานที่ / ปลายทาง" enterkeyhint="search">
+        <button title="นำทางจากตำแหน่งปัจจุบัน" data-act="route">➤</button>
+        <button type="button" id="locate" title="ตำแหน่งของฉัน">◎</button>
+      </form>
+      <button class="icon" data-max="paneA" title="เต็มจอ">⛶</button>
+    </header>
+    <iframe id="mapFrame" allow="geolocation" referrerpolicy="no-referrer-when-downgrade" title="Map"></iframe>
+  </section>
+
+  <div id="divider" role="separator" aria-label="ปรับขนาด"><span></span></div>
+
+  <section id="paneB" class="pane">
+    <header class="bar">
+      <form id="urlForm" class="grow">
+        <input id="urlQ" type="text" placeholder="วางลิงก์ YouTube หรือ URL เว็บ" inputmode="url" autocapitalize="off" autocomplete="off">
+        <button>เปิด</button>
+      </form>
+      <button class="icon" id="popout" title="เปิดในหน้าต่างใหม่">↗</button>
+      <button class="icon" data-max="paneB" title="เต็มจอ">⛶</button>
+    </header>
+    <div id="appView">
+      <iframe id="appFrame" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen title="App"></iframe>
+      <div id="notice" hidden></div>
+    </div>
+  </section>
+</div>
+
+<nav id="dock">
+  <div id="apps"></div>
+  <div class="tools">
+    <button id="swap" title="สลับฝั่ง">⇄</button>
+    <button id="layout" title="สลับแนวตั้ง/แนวนอน">▥</button>
+    <button id="ratio" title="สัดส่วนจอ">50/50</button>
+    <button id="fs" title="เต็มจอทั้งเครื่อง">⤢</button>
+  </div>
+</nav>
+<script src="app.js"></script>
+</body>
+</html>
