@@ -50,6 +50,7 @@ a{color:var(--accent)}
 .seg{display:inline-flex;background:var(--surface-2);border-radius:999px;padding:4px}
 .seg button{min-width:44px;height:40px;padding:0 10px;border-radius:999px;display:grid;place-items:center;color:var(--muted);font-size:14px;font-weight:600;white-space:nowrap}
 .seg button.on{background:var(--raise);color:var(--fg)}
+.seg button:disabled{opacity:.35;cursor:default}
 .bar-apps{flex:1;min-width:0;display:flex;justify-content:center;gap:12px;overflow-x:auto;scrollbar-width:none}
 .bar-apps::-webkit-scrollbar{display:none}
 .dock-app{overflow:hidden;flex:none;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:700;font-size:18px;color:#fff;position:relative;opacity:.9}
@@ -121,6 +122,32 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .fab{right:14px;bottom:14px;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:rgba(16,17,19,.94);border:1px solid var(--line);color:var(--fg)}
 #recenter.off{color:var(--accent)}
 #mapPane.has-card #recenter{display:none}
+#evBtn{bottom:82px;color:var(--ok)}
+#mapPane.has-card #evBtn{bottom:14px}
+#mapPane.navigating #evBtn,#mapPane.ev-open #evBtn,#mapPane.ev-open #recenter,#mapPane.ev-open #routeCard{display:none}
+#stopMode{top:128px;left:14px;color:var(--fg)}
+#stopMode svg[aria-hidden]{color:var(--accent)}
+#stopMode .ic:last-child svg{color:var(--muted)}
+.stops{display:flex;flex-direction:column;gap:6px}
+.stops:empty{display:none}
+.stop{display:flex;align-items:center;gap:10px;padding:8px 6px 8px 12px;border-radius:12px;background:var(--surface-2)}
+.stop .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--ok);color:#000;font-size:13px;font-weight:700;display:grid;place-items:center}
+.stop .icon-btn{width:36px;height:36px}
+#evCard{left:14px;bottom:14px;width:min(440px,calc(100% - 28px));max-height:calc(100% - 92px);padding:14px;display:flex;flex-direction:column;gap:10px}
+.ev-head{display:flex;align-items:center;gap:10px}
+.ev-ic{color:var(--ok)}
+.ev-filters{flex-wrap:wrap}
+#evDc[aria-pressed=true]{background:rgba(48,209,88,.16);border-color:var(--ok);color:var(--ok)}
+.ev-list{flex:1;min-height:60px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.ev-item{display:flex;gap:12px;align-items:center;padding:12px;border-radius:14px;background:var(--surface-2);border:1.5px solid transparent}
+.ev-item.on{border-color:var(--ok)}
+.ev-item .t{font-size:16px;font-weight:600}
+.ev-item .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ev-item .btn{height:44px;padding:0 14px}
+.ev-pin{width:30px;height:30px;border-radius:50%;background:var(--ok);border:2px solid #000;display:grid;place-items:center;color:#000;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.ev-pin svg[aria-hidden]{width:18px;height:18px}
+.ev-pin.dc{background:#ffd60a}
+.stop-pin{width:26px;height:26px;border-radius:50%;background:var(--ok);border:2px solid #000;color:#000;font-weight:700;font-size:13px;display:grid;place-items:center}
 #mapPane.navigating #recenter{bottom:104px}
 #mapPane.navigating #search,#mapPane.navigating #results,#mapPane.navigating #gmTab{display:none}
 #gmTab{top:80px;left:14px}

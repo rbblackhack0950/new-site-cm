@@ -32,9 +32,11 @@
           </div>
           <button id="rcClose" class="icon-btn" aria-label="ยกเลิกปลายทาง" data-i="close"></button>
         </div>
+        <div id="rcStops" class="stops"></div>
         <div id="rcAlts" class="alts"></div>
         <div class="row">
           <button id="rcGo" class="btn primary grow"><span class="ic" data-i="nav"></span>เริ่มนำทาง</button>
+          <button id="rcAddStop" class="btn square" aria-label="เพิ่มจุดแวะ" data-i="addStop"></button>
           <button id="rcOpts" class="btn square" aria-label="ตัวเลือกเส้นทาง" data-i="tune"></button>
         </div>
       </div>
@@ -55,11 +57,32 @@
           <div id="nfEta" class="nf-eta"></div>
           <div id="nfMeta" class="muted"></div>
         </div>
+        <button id="nfEv" class="icon-btn" aria-label="ที่ชาร์จระหว่างทาง" data-i="bolt"></button>
         <button id="nfVoice" class="icon-btn" aria-label="เสียงนำทาง" data-i="vol"></button>
         <button id="nfStop" class="btn danger" aria-label="หยุดนำทาง">หยุด</button>
       </div>
 
       <button id="recenter" class="float fab autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
+      <button id="evBtn" class="float fab autohide" aria-label="ที่ชาร์จรถไฟฟ้า" data-i="bolt"></button>
+      <button id="stopMode" class="float chip-btn" hidden><span class="ic" data-i="addStop"></span>เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่ <span class="ic" data-i="close"></span></button>
+
+      <!-- EV charging stations (OpenStreetMap data) -->
+      <div id="evCard" class="float card" hidden>
+        <div class="ev-head">
+          <span class="ic ev-ic" data-i="bolt"></span>
+          <div class="grow rc-name">ที่ชาร์จ</div>
+          <button id="evX" class="icon-btn" aria-label="ปิด" data-i="close"></button>
+        </div>
+        <div class="row ev-filters">
+          <div class="seg" id="evWhere">
+            <button data-where="near" class="on">ใกล้ฉัน</button>
+            <button data-where="route">ระหว่างทาง</button>
+          </div>
+          <button id="evDc" class="chip-btn" aria-pressed="false">ชาร์จเร็ว DC</button>
+        </div>
+        <div id="evList" class="ev-list"></div>
+        <button id="evGoogle" class="btn ghost small-btn">ไม่เจอ? ค้นใน Google Maps</button>
+      </div>
       <button id="gmTab" class="float chip-btn" hidden><span class="ic" data-i="search"></span>Google Maps</button>
 
       <!-- Google Maps tab: the app lays a browser view over #gmHost -->

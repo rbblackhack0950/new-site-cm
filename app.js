@@ -60,6 +60,8 @@ const P = {
   back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z',
   reload: 'M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z',
   add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z',
+  bolt: 'M7 2v11h3v9l7-12h-4l4-8z',
+  addStop: 'M13 7h-2v3H8v2h3v3h2v-3h3v-2h-3zm-1-5C7.8 2 4 5.22 4 10.2c0 3.32 2.67 7.25 8 11.8 5.33-4.55 8-8.48 8-11.8C20 5.22 16.2 2 12 2m0 18c-4.1-3.6-6-6.6-6-9.8C6 6.6 8.7 4 12 4s6 2.6 6 6.2c0 3.2-1.9 6.2-6 9.8',
   history: 'M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.95 8.95 0 0 0 13 21a9 9 0 0 0 0-18m-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z',
   // maneuver arrows
   up: 'M11 21V7.83l-4.59 4.58L5 11l7-7 7 7-1.41 1.41L13 7.83V21z',
@@ -208,7 +210,7 @@ function instr(step) {
   let t;
   switch (type) {
     case 'depart': return name ? `มุ่งหน้าไปตาม${name}` : 'เริ่มออกเดินทาง';
-    case 'arrive': return 'ถึงจุดหมายปลายทาง';
+    case 'arrive': return step._wp ? `ถึงจุดแวะ ${step._wp}` : 'ถึงจุดหมายปลายทาง';
     case 'roundabout': case 'rotary': t = exit ? `เข้าวงเวียน ออกทางออกที่ ${exit}` : 'เข้าวงเวียน'; break;
     case 'roundabout turn': t = `ที่วงเวียน ${turnWord(mod)}`; break;
     case 'exit roundabout': case 'exit rotary': t = 'ออกจากวงเวียน'; break;
@@ -245,8 +247,8 @@ const AVOID_TXT = { toll: 'ทางเสียค่าผ่านทาง',
 let map = null;
 const L_ = window.L;
 const here = { ll: null, acc: null, heading: null, speed: null };
-let meMarker, destMarker, routeLines = [], altLines = [], follow = true;
-const nav = { dest: null, route: null, active: false, line: [], cum: [], stepAt: [], seg: 0, step: 1, said: {}, off: 0, lastReroute: 0, routing: false };
+let meMarker, destMarker, routeLines = [], altLines = [], stopMarkers = [], follow = true;
+const nav = { dest: null, stops: [], adding: false, route: null, active: false, line: [], cum: [], stepAt: [], seg: 0, step: 1, said: {}, off: 0, lastReroute: 0, routing: false };
 
 if (L_) {
   map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
@@ -262,6 +264,11 @@ if (L_) {
   map.on('contextmenu', e => pickDest({ lat: e.latlng.lat, lng: e.latlng.lng, name: 'ตำแหน่งที่เลือก', sub: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}` }));
 }
 
+// Leaflet ignores view changes while a zoom animation is running (e.g. the zoom to the first GPS fix)
+function whenMapIdle(fn) {
+  if (!map) return;
+  if (map._animatingZoom) map.once('zoomend', () => setTimeout(fn, 0)); else fn();
+}
 function setFollow(on) {
   follow = on;
   $('#recenter').classList.toggle('off', !on);
@@ -412,9 +419,10 @@ function gmapsSearch(q) {
 // Destination & route
 // ===================================================================
 function pickDest(d) {
+  if (nav.adding && nav.dest) return addStop(d);
   gmClose(); showResults('');
   qEl.value = d.name; $('#qClear').hidden = false;
-  nav.dest = d;
+  nav.dest = d; nav.stops = []; drawStops(); renderStops();
   st.recentDest = [d, ...st.recentDest.filter(x => Math.abs(x.lat - d.lat) + Math.abs(x.lng - d.lng) > 1e-5)].slice(0, 8).map(({ lat, lng, name, sub }) => ({ lat, lng, name, sub }));
   save();
   if (map) {
@@ -438,8 +446,9 @@ async function route(reroute) {
     if (!ok) { $('#rcMeta').textContent = 'ต้องเปิดตำแหน่ง (GPS) เพื่อหาเส้นทาง'; return; }
   }
   nav.routing = true;
-  const from = here.ll, to = [nav.dest.lat, nav.dest.lng];
-  const base = `${OSRM}${from[1]},${from[0]};${to[1]},${to[0]}?overview=false&steps=true&geometries=geojson&alternatives=${reroute ? 'false' : 3}`;
+  const pts = [here.ll, ...nav.stops.map(s => [s.lat, s.lng]), [nav.dest.lat, nav.dest.lng]];
+  const many = nav.stops.length > 0; // OSRM offers alternatives only between two points
+  const base = `${OSRM}${pts.map(p => p[1] + ',' + p[0]).join(';')}?overview=false&steps=true&geometries=geojson&alternatives=${reroute || many ? 'false' : 3}`;
   const want = AVOID.filter(k => st.avoid[k]);
   // the public OSRM server may only accept one class per request: try all, then one at a time, then none
   const tries = [want, ...(want.length > 1 ? want.map(k => [k]) : []), ...(want.length ? [[]] : [])];
@@ -460,7 +469,8 @@ async function route(reroute) {
     setRoute(j.routes[0]);
     if (!reroute) {
       renderAlts();
-      map?.fitBounds(L_.latLngBounds(j.routes.flatMap(r => routeLine(r).line)), { padding: [60, 60] });
+      const b = L_.latLngBounds(j.routes.flatMap(r => routeLine(r).line));
+      whenMapIdle(() => map.fitBounds(b, { padding: [60, 60] }));
       setFollow(false);
     }
   } catch (err) {
@@ -471,13 +481,15 @@ async function route(reroute) {
 
 function routeLine(r) {
   const line = [], stepAt = [], steps = [];
-  r.legs[0].steps.forEach(s => {
+  r.legs.forEach((leg, li) => leg.steps.forEach(s => {
     const pts = s.geometry.coordinates.map(c => [c[1], c[0]]);
     if (line.length && pts.length) pts.shift();
-    // "exit the roundabout" only repeats the roundabout instruction, so keep its road but not the prompt
-    if (!/^exit (roundabout|rotary)$/.test(s.maneuver.type)) { steps.push(s); stepAt.push(Math.max(0, line.length - 1)); }
+    // a stop's arrival becomes "ถึงจุดแวะ …"; the next leg's "depart" adds nothing
+    if (s.maneuver.type === 'arrive' && li < r.legs.length - 1) s._wp = nav.stops[li]?.name || 'จุดแวะ';
+    const skip = /^exit (roundabout|rotary)$/.test(s.maneuver.type) || (s.maneuver.type === 'depart' && li > 0);
+    if (!skip) { steps.push(s); stepAt.push(Math.max(0, line.length - 1)); }
     line.push(...pts);
-  });
+  }));
   if (line.length < 2) line.push(line[0] || here.ll);
   return { line, stepAt, steps };
 }
@@ -544,7 +556,7 @@ function setRoute(r) {
 
 function clearRoute() {
   stopNav(true);
-  nav.dest = nav.route = null;
+  nav.dest = nav.route = null; nav.stops = []; drawStops(); renderStops(); setStopMode(false);
   routeLines.forEach(l => l.remove()); routeLines = [];
   nav.alts = []; drawAlts();
   destMarker?.remove(); destMarker = null;
@@ -553,6 +565,193 @@ function clearRoute() {
 }
 $('#rcClose').onclick = clearRoute;
 $('#rcGo').onclick = () => { if (nav.route) startNav(); else route(); };
+
+// ===================================================================
+// Stops along the way
+// ===================================================================
+function setStopMode(on) {
+  nav.adding = on;
+  $('#stopMode').hidden = !on;
+  qEl.placeholder = on ? 'ค้นหาจุดแวะ' : 'ไปที่ไหน';
+  $('#gmPickGo').lastChild.textContent = on ? 'แวะที่นี่' : 'ไปที่นี่';
+  if (on) { qEl.value = ''; $('#qClear').hidden = true; }
+  else if (nav.dest && !qEl.value) qEl.value = nav.dest.name;
+}
+$('#stopMode').onclick = () => setStopMode(false);
+function addStop(d) {
+  setStopMode(false); gmClose(); showResults('');
+  nav.stops.push({ lat: d.lat, lng: d.lng, name: d.name, sub: d.sub });
+  qEl.value = nav.dest.name;
+  drawStops(); renderStops();
+  toast('เพิ่มจุดแวะ ' + d.name, 2500);
+  if (!nav.active) $('#rcMeta').textContent = 'กำลังหาเส้นทาง…';
+  route(nav.active);
+}
+function removeStop(i) {
+  nav.stops.splice(i, 1);
+  drawStops(); renderStops();
+  $('#rcMeta').textContent = 'กำลังหาเส้นทาง…';
+  route(nav.active);
+}
+function renderStops() {
+  $('#rcStops').innerHTML = nav.stops.map((s, i) => `<div class="stop"><span class="n">${i + 1}</span>
+    <div class="grow"><div class="ellipsis">แวะ ${esc(s.name)}</div></div>
+    <button class="icon-btn" data-rmstop="${i}" aria-label="ลบจุดแวะ ${esc(s.name)}">${svg('close')}</button></div>`).join('');
+}
+$('#rcStops').addEventListener('click', e => { const b = e.target.closest('[data-rmstop]'); if (b) removeStop(+b.dataset.rmstop); });
+function drawStops() {
+  stopMarkers.forEach(m => m.remove()); stopMarkers = [];
+  if (!map) return;
+  nav.stops.forEach((s, i) => stopMarkers.push(L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="stop-pin">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }), interactive: false }).addTo(map)));
+}
+$('#rcAddStop').onclick = () => {
+  openSheet(`<h2>เพิ่มจุดแวะ</h2>
+    <button class="set-row ritem" id="asEv"><span class="ic ev-ic" data-i="bolt"></span><div class="grow"><div class="t">ที่ชาร์จระหว่างทาง</div></div></button>
+    <button class="set-row ritem" id="asSearch"><span class="ic" data-i="search"></span><div class="grow"><div class="t">ค้นหาสถานที่</div><div class="muted">หรือกดค้างบนแผนที่</div></div></button>
+    ${st.recentDest.filter(d => d.name !== nav.dest?.name).slice(0, 5).map((d, i) => `<button class="set-row ritem" data-asrecent="${st.recentDest.indexOf(d)}"><span class="ic" data-i="history"></span><div class="grow"><div class="t ellipsis">${esc(d.name)}</div></div></button>`).join('')}
+    <div class="sheet-actions"><button class="btn" data-close>ยกเลิก</button></div>`, s => {
+    s.querySelector('#asEv').onclick = () => { closeSheet(); openEv('route'); };
+    s.querySelector('#asSearch').onclick = () => { closeSheet(); setStopMode(true); qEl.focus(); };
+    s.querySelectorAll('[data-asrecent]').forEach(b => b.onclick = () => { closeSheet(); addStop(st.recentDest[+b.dataset.asrecent]); });
+  });
+};
+
+// ===================================================================
+// EV charging stations (OpenStreetMap via Overpass): near me, or along the route
+// ===================================================================
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+// [OSM socket tag, label, DC fast charging]
+const SOCKETS = [['type2_combo', 'CCS2', true], ['chademo', 'CHAdeMO', true], ['gb_dc', 'GB/T DC', true], ['type2', 'Type 2', false], ['type2_cable', 'Type 2', false], ['type1', 'Type 1', false], ['gb_ac', 'GB/T AC', false]];
+const ev = { open: false, where: 'near', dc: false, all: [], markers: [], seq: 0, sel: null };
+async function overpass(q) {
+  for (const u of OVERPASS) {
+    try { return await getJSON(u, 25000, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) }); } catch {}
+  }
+  throw new Error('overpass');
+}
+function parseStation(e) {
+  const t = e.tags || {};
+  const sockets = [];
+  for (const [k, label, dc] of SOCKETS) {
+    const n = t['socket:' + k];
+    if (!n || n === 'no' || n === '0' || sockets.some(s => s.label === label)) continue;
+    const out = parseFloat(t['socket:' + k + ':output']);
+    sockets.push({ label, dc, kw: isNaN(out) ? null : out });
+  }
+  return {
+    id: e.type + e.id, lat: e.lat ?? e.center?.lat, lng: e.lon ?? e.center?.lon,
+    name: t['name:th'] || t.name || t.brand || t.operator || 'สถานีชาร์จ',
+    op: t.operator || t.brand || '', sockets, dc: sockets.some(s => s.dc)
+  };
+}
+// distance from a point to the route and how far along the route it sits
+function nearRoute(p) {
+  const { line, cum } = nav;
+  let best = { d: Infinity, along: 0 };
+  for (let i = 0; i < line.length - 1; i++) {
+    const r = projectOnSeg(p, line[i], line[i + 1]);
+    if (r.d < best.d) best = { d: r.d, along: cum[i] + r.t * (cum[i + 1] - cum[i]) };
+  }
+  return best;
+}
+function openEv(where) {
+  ev.open = true; ev.where = where === 'route' && nav.route ? 'route' : 'near';
+  $('#evCard').hidden = false; $('#mapPane').classList.add('ev-open');
+  $('#evWhere [data-where="route"]').disabled = !nav.route;
+  loadEv();
+}
+function closeEv() {
+  ev.open = false; ev.seq++;
+  $('#evCard').hidden = true; $('#mapPane').classList.remove('ev-open');
+  ev.markers.forEach(m => m.remove()); ev.markers = [];
+}
+async function loadEv() {
+  $$('#evWhere button').forEach(b => b.classList.toggle('on', b.dataset.where === ev.where));
+  $('#evList').innerHTML = '<div class="muted center">กำลังหาที่ชาร์จ…</div>';
+  ev.fitted = false;
+  const seq = ++ev.seq;
+  let q;
+  if (ev.where === 'route') {
+    const lats = nav.line.map(p => p[0]), lngs = nav.line.map(p => p[1]), pad = 0.03;
+    q = `[out:json][timeout:25];nwr["amenity"="charging_station"](${Math.min(...lats) - pad},${Math.min(...lngs) - pad},${Math.max(...lats) + pad},${Math.max(...lngs) + pad});out center tags 400;`;
+  } else {
+    const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
+    q = `[out:json][timeout:25];nwr["amenity"="charging_station"](around:15000,${c[0]},${c[1]});out center tags 150;`;
+  }
+  try {
+    const j = await overpass(q);
+    if (seq !== ev.seq) return;
+    const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
+    let list = j.elements.map(parseStation).filter(s => s.lat != null);
+    if (ev.where === 'route') {
+      list = list.map(s => ({ ...s, ...nearRoute([s.lat, s.lng]) })).filter(s => s.d <= 3000 && (!nav.active || s.along > progAlong));
+      list.sort((a, b) => a.along - b.along);
+    } else {
+      list.forEach(s => s.dist = haversine(c, [s.lat, s.lng]));
+      list.sort((a, b) => a.dist - b.dist);
+    }
+    ev.all = list.slice(0, 60);
+    renderEv();
+  } catch {
+    if (seq === ev.seq) $('#evList').innerHTML = '<div class="muted center">หาที่ชาร์จไม่ได้ ตรวจสอบอินเทอร์เน็ต หรือค้นใน Google Maps</div>';
+  }
+}
+function renderEv() {
+  const list = ev.all.filter(s => !ev.dc || s.dc);
+  ev.markers.forEach(m => m.remove()); ev.markers = [];
+  if (map) list.forEach(s => {
+    const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin${s.dc ? ' dc' : ''}">${svg('bolt')}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(map);
+    m.on('click', () => selectEv(s.id, true)); ev.markers.push(m);
+  });
+  // show the nearest stations (and the car) beside the list
+  if (map && list.length && !ev.fitted) {
+    ev.fitted = true;
+    // nearby ones only, so one far-away station does not zoom the map out
+    const key = s => ev.where === 'route' ? s.d : s.dist, near = Math.max(3000, key(list[0]) * 3);
+    const pts = list.filter(s => key(s) <= near).slice(0, 6).map(s => [s.lat, s.lng]).concat(here.ll ? [here.ll] : []);
+    const card = $('#evCard').getBoundingClientRect(), m = $('#map').getBoundingClientRect();
+    const beside = card.width < m.width * .6; // wide map: keep pins right of the panel; narrow: above it
+    setFollow(false);
+    whenMapIdle(() => {
+      map.stop(); // an unfinished follow-the-car pan would otherwise undo the fit
+      map.fitBounds(L_.latLngBounds(pts), {
+        paddingTopLeft: [beside ? card.right - m.left + 30 : 30, 40],
+        paddingBottomRight: [40, beside ? 40 : m.bottom - card.top + 30], maxZoom: 16, animate: false
+      });
+    });
+  }
+  const canStop = !!nav.dest;
+  $('#evList').innerHTML = list.length ? list.map(s => {
+    const where = ev.where === 'route'
+      ? `ห่างเส้นทาง ${fmtDist(s.d)} · อีก ${fmtDist(Math.max(0, s.along - (nav.active ? progAlong : 0)))}`
+      : fmtDist(s.dist);
+    const chips = s.sockets.map(k => `<span class="chip${k.dc ? ' ok' : ''}">${esc(k.label)}${k.kw ? ' ' + k.kw + ' kW' : ''}</span>`).join('') || '<span class="chip">ไม่ระบุหัวชาร์จ</span>';
+    return `<div class="ev-item${ev.sel === s.id ? ' on' : ''}" data-ev="${esc(s.id)}">
+      <div class="grow"><div class="t ellipsis">${esc(s.name)}</div><div class="muted ellipsis">${esc([s.op !== s.name ? s.op : '', where].filter(Boolean).join(' · '))}</div><div class="chips">${chips}</div></div>
+      ${canStop ? `<button class="btn primary" data-evstop="${esc(s.id)}">แวะ</button>` : `<button class="btn primary" data-evgo="${esc(s.id)}">ไปที่นี่</button>`}
+    </div>`;
+  }).join('') : `<div class="muted center">ไม่พบที่ชาร์จ${ev.dc ? 'แบบ DC' : ''}${ev.where === 'route' ? 'ใกล้เส้นทาง' : 'ในรัศมี 15 กม.'} ข้อมูลจาก OpenStreetMap อาจไม่ครบ ลองค้นใน Google Maps</div>`;
+}
+function selectEv(id, scroll) {
+  ev.sel = id;
+  $$('.ev-item').forEach(el => el.classList.toggle('on', el.dataset.ev === id));
+  const s = ev.all.find(x => x.id === id);
+  if (scroll) $(`.ev-item[data-ev="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+  else if (s && map) { setFollow(false); map.panTo([s.lat, s.lng]); }
+}
+const evAsPlace = s => ({ lat: s.lat, lng: s.lng, name: s.name, sub: s.sockets.map(k => k.label).join(', ') || 'สถานีชาร์จ' });
+$('#evList').addEventListener('click', e => {
+  const stop = e.target.closest('[data-evstop]'), go = e.target.closest('[data-evgo]');
+  const s = ev.all.find(x => x.id === (stop || go)?.dataset[stop ? 'evstop' : 'evgo']);
+  if (s) { closeEv(); return stop ? addStop(evAsPlace(s)) : pickDest(evAsPlace(s)); }
+  const it = e.target.closest('[data-ev]'); if (it) selectEv(it.dataset.ev, false);
+});
+$('#evWhere').addEventListener('click', e => { const b = e.target.closest('[data-where]'); if (b && !b.disabled && b.dataset.where !== ev.where) { ev.where = b.dataset.where; loadEv(); } });
+$('#evDc').onclick = () => { ev.dc = !ev.dc; $('#evDc').setAttribute('aria-pressed', ev.dc); renderEv(); };
+$('#evX').onclick = closeEv;
+$('#evGoogle').onclick = () => { closeEv(); gmapsSearch('สถานีชาร์จรถไฟฟ้า'); };
+$('#evBtn').onclick = () => openEv(nav.route ? 'route' : 'near');
+$('#nfEv').onclick = () => openEv('route');
 
 // ===================================================================
 // Turn-by-turn
@@ -628,6 +827,11 @@ function navTick() {
     stopNav(true); clearRoute();
     return;
   }
+
+  // stops behind us are done: reroutes then skip them
+  nav.steps.forEach((s, k) => {
+    if (s._wp && !s._passed && nav.stepAt[k] < along - 30) { s._passed = true; nav.stops.shift(); drawStops(); }
+  });
 
   // next maneuver
   let i = 1;
@@ -915,5 +1119,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, media, gm, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

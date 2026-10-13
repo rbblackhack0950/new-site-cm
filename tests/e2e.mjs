@@ -30,6 +30,22 @@ const ALT = { distance: 2500, duration: 420, legs: [{ steps: [
   { name: 'ถนนพระราม 1', geometry: geo([P2, D]), maneuver: { type: 'turn', modifier: 'right', location: [P2[1], P2[0]] }, distance: 960 },
   { name: '', geometry: geo([D, D]), maneuver: { type: 'arrive', location: [D[1], D[0]] }, distance: 0 }
 ] }] };
+// the same trip with a stop at B: two legs
+const ROUTE_STOP = { code: 'Ok', routes: [{ distance: 1760, duration: 300, legs: [
+  { steps: [
+    { name: 'ถนนพญาไท', geometry: geo([A, B]), maneuver: { type: 'depart', location: [A[1], A[0]] }, distance: 445 },
+    { name: '', geometry: geo([B, B]), maneuver: { type: 'arrive', location: [B[1], B[0]] }, distance: 0 }] },
+  { steps: [
+    { name: 'ถนนเพชรบุรี', geometry: geo([B, C]), maneuver: { type: 'depart', location: [B[1], B[0]] }, distance: 650 },
+    { name: 'ซอยทดสอบ', geometry: geo([C, D]), maneuver: { type: 'turn', modifier: 'left', location: [C[1], C[0]] }, distance: 665 },
+    { name: '', geometry: geo([D, D]), maneuver: { type: 'arrive', location: [D[1], D[0]] }, distance: 0 }] }
+] }] };
+// charging stations: fast DC at B (on the route), AC near C (on the route), one far away
+const STATIONS = { elements: [
+  { type: 'node', id: 1, lat: 13.7500, lon: 100.5340, tags: { amenity: 'charging_station', name: 'PEA VOLTA สามย่าน', operator: 'PEA', 'socket:type2_combo': '2', 'socket:type2_combo:output': '120 kW', 'socket:type2': '2' } },
+  { type: 'way', id: 2, center: { lat: 13.7490, lon: 100.5402 }, tags: { amenity: 'charging_station', name: 'EA Anywhere', 'socket:type2': '4', 'socket:type2:output': '22 kW' } },
+  { type: 'node', id: 3, lat: 13.9000, lon: 100.7000, tags: { amenity: 'charging_station', name: 'Far Station', 'socket:type2_combo': '1' } }
+] };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const PLACE_URL = 'https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.756!4d100.54';
 
@@ -101,10 +117,14 @@ async function newPage(viewport, { app = 21, ...extra } = {}) {
     if (u.includes('t1.gstatic.com/faviconV2') && u.includes('plain.example')) return svgIcon(64);
     if (u.includes('router.project-osrm.org')) {
       hit('osrm'); const ex = new URL(u).searchParams.get('exclude');
+      (counts.osrmUrls = counts.osrmUrls || []).push(u);
+      if (new URL(u).pathname.split(';').length === 3) return json(ROUTE_STOP);
       if (ex) (counts.exclude = counts.exclude || []).push(ex);
       if (ex && ex.includes(',')) return route.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ code: 'InvalidValue' }) });
       return json(ex === 'toll' ? { code: 'Ok', routes: [ALT] } : { code: 'Ok', routes: [ROUTE.routes[0], ALT] });
     }
+    if (u.includes('overpass-api.de')) { hit('overpass0'); return route.fulfill({ status: 504, body: 'busy' }); }
+    if (u.includes('overpass.kumi.systems')) { hit('overpass1'); (counts.overpassQ = counts.overpassQ || []).push(decodeURIComponent((route.request().postData() || '').replace(/^data=/, ''))); return json(STATIONS); }
     return route.fulfill({ status: 404, body: '' });
   });
   await page.goto(BASE);
@@ -366,6 +386,107 @@ console.log('Search & navigation');
     await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ตำแหน่งที่เลือก');
   });
   await test('no console errors in navigation', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
+// ---------- charging stations & stops ----------
+console.log('Charging & stops');
+{
+  const { page, ctx, errors, last } = await newPage({ width: 1280, height: 800 });
+  const setPos = async (p, speed = 12) => { await page.evaluate(([a, b, s]) => __setPos(a, b, s), [p[0], p[1], speed]); await page.waitForTimeout(120); };
+  const coordsIn = u => new URL(u).pathname.split('/').pop().split(';').length;
+  await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
+  await test('⚡ near me: stations nearest first, with plugs and power; second server used when the first is busy', async () => {
+    await page.click('#evBtn');
+    await page.waitForSelector('.ev-item');
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'EA Anywhere', 'Far Station']);
+    assert.match(await page.textContent('.ev-item >> nth=0'), /CCS2 120 kW.*Type 2/s);
+    assert.match(counts.overpassQ.at(-1), /around:15000,13\.746,100\.534/);
+    assert.ok(counts.overpass0 >= 1 && counts.overpass1 >= 1);
+    assert.equal(await page.locator('.ev-pin').count(), 3, 'pins on the map');
+    await page.waitForTimeout(400);
+    const card = await box(page, '#evCard'), mapBox = await box(page, '#map');
+    for (const i of [0, 1]) { // the two nearby stations are in view and not under the panel
+      const p = await page.locator('.ev-pin').nth(i).boundingBox();
+      const inMap = p.x > mapBox.x && p.x + p.width < mapBox.x + mapBox.width && p.y > mapBox.y && p.y + p.height < mapBox.y + mapBox.height;
+      const clear = p.x > card.x + card.width || p.y + p.height < card.y;
+      assert.ok(inMap && clear, `pin ${i} visible at ${p.x},${p.y}`);
+    }
+    await shot(page, '10-ev-near');
+  });
+  await test('fast DC filter', async () => {
+    await page.click('#evDc');
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'Far Station']);
+    await page.click('#evDc');
+  });
+  await test('ไปที่นี่ on a station sets it as the destination', async () => {
+    await page.click('.ev-item:has-text("EA Anywhere") [data-evgo]');
+    assert.equal(await vis(page, '#evCard'), false);
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'EA Anywhere');
+    await page.click('#rcClose');
+  });
+  await test('along the route: only stations near it, in driving order; แวะ adds a stop', async () => {
+    await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#evBtn');
+    await page.waitForSelector('#evWhere [data-where="route"].on');
+    await page.waitForSelector('.ev-item');
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'EA Anywhere']);
+    assert.match(await page.textContent('.ev-item >> nth=0'), /ห่างเส้นทาง/);
+    await page.click('.ev-item:has-text("PEA") [data-evstop]');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    assert.equal(coordsIn(counts.osrmUrls.at(-1)), 3, 'route goes through the stop');
+    assert.match(await page.textContent('#rcStops'), /แวะ PEA VOLTA สามย่าน/);
+    assert.equal(await page.locator('.stop-pin').count(), 1);
+    assert.equal(await page.evaluate(() => __car.nav.dest.lat), 13.756, 'destination unchanged');
+    await shot(page, '11-stop');
+  });
+  await test('navigating: "ถึงจุดแวะ", the stop is dropped once passed, reroutes skip it', async () => {
+    await page.click('#rcGo');
+    assert.equal(await page.textContent('#nbText'), 'ถึงจุดแวะ PEA VOLTA สามย่าน');
+    await setPos([13.7497, 100.5340]);
+    assert.match((await page.evaluate(() => __said)).at(-1), /ถึงจุดแวะ PEA/);
+    await setPos([13.7500, 100.5360]);
+    assert.equal(await page.evaluate(() => __car.nav.stops.length), 0);
+    assert.equal(await page.textContent('#nbText'), 'เลี้ยวซ้าย เข้าสู่ซอยทดสอบ');
+    for (const lng of [100.5300, 100.5299, 100.5298, 100.5297]) await setPos([13.7520, lng]);
+    await page.waitForTimeout(400);
+    assert.equal(coordsIn(counts.osrmUrls.at(-1)), 2, 'reroute without the passed stop');
+  });
+  await test('⚡ while navigating shows stations ahead', async () => {
+    await setPos([13.7500, 100.5380]);
+    await page.click('#nfEv');
+    await page.waitForSelector('.ev-item');
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['EA Anywhere'], 'stations behind are left out');
+    await page.click('#evX');
+    await page.click('#nfStop');
+  });
+  await test('add a stop by search; remove a stop', async () => {
+    await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcAddStop'); await page.click('#asSearch');
+    assert.ok(await vis(page, '#stopMode'));
+    assert.equal(await page.getAttribute('#q', 'placeholder'), 'ค้นหาจุดแวะ');
+    await page.fill('#q', 'ร้านกาแฟ'); await page.press('#q', 'Enter');
+    assert.match((await last('paneLoad', 1))[2], /google\.com\/maps\/search/);
+    assert.match(await page.textContent('#gmPickGo'), /แวะที่นี่/);
+    await page.evaluate(() => __gmUrl('https://www.google.com/maps/place/Cafe/@13.75,100.534,17z/data=!3d13.75!4d100.534'));
+    await page.click('#gmPickGo');
+    await page.waitForFunction(() => __car.nav.stops.length === 1);
+    assert.equal(await page.evaluate(() => __car.nav.dest.lat), 13.756);
+    assert.equal(await vis(page, '#stopMode'), false);
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcStops [data-rmstop]');
+    await page.waitForFunction(() => __car.nav.stops.length === 0);
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    assert.equal(coordsIn(counts.osrmUrls.at(-1)), 2);
+  });
+  await test('ไม่เจอ? opens Google Maps searching for chargers', async () => {
+    await page.click('#evBtn'); await page.click('#evGoogle');
+    assert.match((await last('paneLoad', 1))[2], /maps\/search\/%E0%B8%AA%E0%B8%96%E0%B8%B2%E0%B8%99%E0%B8%B5/);
+    await page.click('#gmX');
+  });
+  await test('no console errors with charging and stops', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
 
