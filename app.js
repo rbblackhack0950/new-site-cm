@@ -1069,7 +1069,13 @@ $('#install').onclick = async () => {
   else toast('Safari: กดปุ่มแชร์ แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”', 6000);
 };
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // when an updated service worker takes over, reload once so the new version shows right away
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
 }
 
 // ===================================================================
