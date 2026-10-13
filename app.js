@@ -248,7 +248,9 @@ function arrowFor(step) {
 // ===================================================================
 // Map
 // ===================================================================
-const TILE = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+// OpenStreetMap tiles (no key needed), darkened with a CSS filter for night-friendly driving
+const TILE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const REFOLLOW_MS = 8000;
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const NOMI = 'https://nominatim.openstreetmap.org/';
 let map = null;
@@ -258,9 +260,14 @@ let meMarker, destMarker, routeLines = [], follow = true;
 
 if (L_) {
   map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
-  L_.tileLayer(TILE, { maxZoom: 20, subdomains: 'abcd', attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a>' }).addTo(map);
+  L_.tileLayer(TILE, { maxZoom: 19, className: 'dark-tiles', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
   map.attributionControl.setPrefix(false);
-  map.on('dragstart', () => setFollow(false));
+  // panning pauses follow mode; while navigating it snaps back after a few seconds
+  let refollowT;
+  map.on('dragstart', () => {
+    setFollow(false); clearTimeout(refollowT);
+    if (nav.active) refollowT = setTimeout(() => nav.active && !follow && setFollow(true), REFOLLOW_MS);
+  });
   map.on('moveend', () => store.set('carscreen.view', [map.getCenter().lat, map.getCenter().lng]));
   map.on('contextmenu', e => pickDest({ lat: e.latlng.lat, lng: e.latlng.lng, name: 'ตำแหน่งที่เลือก', sub: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}` }));
 } else {
@@ -403,12 +410,12 @@ async function route(reroute) {
 }
 
 function setRoute(r) {
-  const steps = r.legs[0].steps;
-  const line = [], stepAt = [];
-  steps.forEach(s => {
+  const line = [], stepAt = [], steps = [];
+  r.legs[0].steps.forEach(s => {
     const pts = s.geometry.coordinates.map(c => [c[1], c[0]]);
     if (line.length && pts.length) pts.shift();
-    stepAt.push(Math.max(0, line.length - (line.length ? 1 : 0)));
+    // "exit the roundabout" only repeats the roundabout instruction, so keep its road but not the prompt
+    if (!/^exit (roundabout|rotary)$/.test(s.maneuver.type)) { steps.push(s); stepAt.push(Math.max(0, line.length - 1)); }
     line.push(...pts);
   });
   if (line.length < 2) line.push(line[0] || here.ll);
@@ -843,5 +850,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, yt, instr, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, yt, instr, setRoute, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

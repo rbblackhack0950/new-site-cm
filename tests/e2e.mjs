@@ -73,7 +73,7 @@ async function newPage(viewport, extra = {}) {
   await ctx.route(/^https?:\/\/(?!localhost)/, route => {
     const u = route.request().url(); const hit = k => (counts[k] = (counts[k] || 0) + 1);
     const json = b => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
-    if (u.includes('basemaps.cartocdn.com') || u.includes('i.ytimg.com')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+    if (u.includes('tile.openstreetmap.org') || u.includes('i.ytimg.com')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
     if (u.includes('router.project-osrm.org')) { hit('osrm'); return json(ROUTE); }
     if (u.includes('nominatim.openstreetmap.org')) { hit('nominatim'); return json(PLACES); }
     if (u.includes('youtube.com/iframe_api')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: YT_STUB });
@@ -229,6 +229,11 @@ console.log('Navigation');
     await setPos([13.7500, 100.5360]);
     assert.equal(await page.textContent('#nbText'), 'เลี้ยวซ้าย เข้าสู่ซอยทดสอบ');
   });
+  await test('panning the map during navigation snaps back to the car', async () => {
+    await page.mouse.move(300, 450); await page.mouse.down(); await page.mouse.move(150, 300, { steps: 5 }); await page.mouse.up();
+    assert.ok(await page.locator('#recenter.off').count(), 'follow paused after pan');
+    await page.waitForSelector('#recenter:not(.off)', { timeout: 10000 });
+  });
   await test('going off-route triggers reroute', async () => {
     const before = counts.osrm;
     for (const lng of [100.5300, 100.5299, 100.5298, 100.5297]) await setPos([13.7520, lng]);
@@ -242,6 +247,7 @@ console.log('Navigation');
     assert.match(await page.textContent('#toast'), /ถึงจุดหมาย/);
   });
   await test('recent destinations appear on focus', async () => {
+    await page.mouse.click(600, 600); // tap to bring the auto-hidden controls back
     await page.click('#q');
     await page.waitForSelector('#results [data-recent]');
     await page.keyboard.press('Escape'); await page.mouse.click(600, 600);
@@ -258,6 +264,20 @@ console.log('Navigation');
     await page.mouse.click(200, 500, { button: 'right' });
     await page.waitForFunction(() => /กม\.|ม\./.test(document.querySelector('#rcMeta').textContent));
     assert.equal(await page.textContent('#rcName'), 'ตำแหน่งที่เลือก');
+  });
+  await test('roundabout exit is not announced twice', async () => {
+    const types = await page.evaluate(() => {
+      const g = (a, b) => ({ type: 'LineString', coordinates: [a, b] });
+      const st = (type, a, b, extra = {}) => ({ name: 'ถนนสรณคมน์', geometry: g(a, b), maneuver: { type, location: a, ...extra } });
+      __car.setRoute({ distance: 900, duration: 120, legs: [{ steps: [
+        st('depart', [100.60, 13.90], [100.60, 13.903]),
+        st('roundabout', [100.60, 13.903], [100.601, 13.904], { exit: 6 }),
+        st('exit roundabout', [100.601, 13.904], [100.602, 13.908]),
+        st('arrive', [100.602, 13.908], [100.602, 13.908])
+      ] }] });
+      return __car.nav.steps.map(s => s.maneuver.type);
+    });
+    assert.deepEqual(types, ['depart', 'roundabout', 'arrive']);
   });
   await test('no console errors during navigation', () => assert.deepEqual(errors, []));
   await ctx.close();

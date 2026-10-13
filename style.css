@@ -59,6 +59,7 @@ body.idle #search.autohide{transform:translateY(-8px)}
 /* ---------- Map pane ---------- */
 #map{position:absolute;inset:0;background:#191a1d}
 .leaflet-container{font:inherit;background:#191a1d}
+.dark-tiles{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.5)}
 .leaflet-control-attribution{background:rgba(0,0,0,.45)!important;color:#aaa!important;font-size:10px}
 .leaflet-control-attribution a{color:#ccc!important}
 .leaflet-control-zoom{display:none}
