@@ -400,14 +400,14 @@ $('#search').onsubmit = async e => {
   for (const r of done) if (r.status === 'fulfilled') for (const it of r.value)
     if (!items.some(x => haversine([x.lat, x.lng], [it.lat, it.lng]) < 60 && x.name === it.name)) items.push(it);
   if (c) { items.forEach(i => i.d = haversine(c, [i.lat, i.lng])); items.sort((a, b) => a.d - b.d); }
+  const gRow = `<button class="ritem gsearch" data-gsearch="${esc(q)}"><span class="ic" data-i="search"></span><div class="grow"><div class="title">ค้น “${esc(q)}” ใน Google Maps</div><div class="sub title">${native ? 'เลือกสถานที่ในฝั่งขวา แล้วกด “ไปที่นี่”' : 'เปิด Google Maps แล้วคัดลอกลิงก์สถานที่มาวาง'}</div></div></button>`;
   if (!items.length) {
     const failed = done.every(r => r.status === 'rejected');
-    return showResults(`<div class="label">${failed ? 'ค้นหาไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง' : 'ไม่พบสถานที่'}</div>
-      <div class="label">${st.longdoKey ? '' : 'ใส่ Longdo Map key ในตั้งค่าเพื่อให้หาสถานที่ในไทยเจอมากขึ้น · '}หรือค้นใน Google Maps แล้วแชร์ลิงก์มาวางที่ช่องค้นหา</div>`);
+    return showResults(`<div class="label">${failed ? 'ค้นหาไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง' : 'ไม่พบสถานที่'}</div>` + gRow);
   }
   resEl._items = items.slice(0, 15);
   showResults(resEl._items.map((it, i) =>
-    `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${it.src === 'longdo' ? '<span class="src">Longdo</span> ' : ''}${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
+    `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${it.src === 'longdo' ? '<span class="src">Longdo</span> ' : ''}${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join('') + gRow);
 };
 // Settings → ทดสอบ: one real Longdo search, reporting what went wrong in plain words
 async function testLongdo(key) {
@@ -433,7 +433,33 @@ async function openGmapsLink(q) {
   if (!d) return showResults(`<div class="label">${native?.httpGet ? 'อ่านตำแหน่งจากลิงก์นี้ไม่ได้' : 'ลิงก์แบบย่อ (maps.app.goo.gl) เปิดได้ในแอป Android เท่านั้น บนเว็บให้เปิดลิงก์ใน Google Maps แล้วคัดลอกลิงก์เต็มจากแถบที่อยู่มาวาง'}</div>`);
   pickDest(d);
 }
+// ---------- Search with Google Maps itself (all of Google's places, no API key) ----------
+// In the Android app Google Maps opens in the right-hand pane; when a place is opened there,
+// its pin arrives through __paneUrl and a card offers to navigate to it.
+let gmWatch = false, gmPlace = null;
+function gmapsSearch(q) {
+  const c = here.ll || (map ? [map.getCenter().lat, map.getCenter().lng] : [13.7563, 100.5018]);
+  const url = `https://www.google.com/maps/search/${encodeURIComponent(q)}/@${c[0]},${c[1]},14z`;
+  showResults(''); qEl.blur();
+  if (!native) return openExternal(url);
+  gmWatch = true;
+  if (st.mode !== 'split') { st.mode = 'split'; save(); applyLayout(); }
+  showView('web'); paneLoad(url);
+  toast('แตะสถานที่ใน Google Maps ฝั่งขวา แล้วกด “ไปที่นี่” ที่แผนที่', 5000);
+}
+function onPaneUrl(url) {
+  if (!gmWatch || !/\/maps\/place\//.test(url)) return;
+  const d = parseGmaps(url);
+  if (!d || !/!3d/.test(url) && !d.name) return;
+  gmPlace = d;
+  $('#gmName').textContent = d.name;
+  $('#gmCard').hidden = false; $('#routeCard').hidden = true;
+}
+$('#gmGo').onclick = () => { $('#gmCard').hidden = true; gmWatch = false; if (gmPlace) pickDest(gmPlace); };
+$('#gmClose').onclick = () => { $('#gmCard').hidden = true; };
+
 resEl.addEventListener('click', e => {
+  const g = e.target.closest('[data-gsearch]'); if (g) return gmapsSearch(g.dataset.gsearch);
   const b = e.target.closest('.ritem'); if (!b) return;
   const d = b.dataset.res != null ? resEl._items[+b.dataset.res] : st.recentDest[+b.dataset.recent];
   qEl.blur(); pickDest(d);
@@ -730,7 +756,7 @@ function syncPane() {
   paneKey = key;
   try { native.rect(r.left, r.top, r.width, r.height, show); } catch {}
 }
-window.__paneUrl = url => { if (!url || url === 'about:blank') return; paneUrl = url; $('#webQ').value = url; $('#webFrame').dataset.url = url; };
+window.__paneUrl = url => { if (!url || url === 'about:blank') return; paneUrl = url; $('#webQ').value = url; $('#webFrame').dataset.url = url; onPaneUrl(url); };
 if (native) { body.classList.add('native'); setInterval(syncPane, 120); }
 
 // ---------- Android app updates: compare the installed APK with dist/version.json ----------

@@ -702,6 +702,22 @@ console.log('Android app');
     await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Wat Arun');
     assert.deepEqual(await last('http'), ['http', 'https://maps.app.goo.gl/AbCdEf']);
   });
+  await test('search with Google Maps in the pane, then navigate to the chosen place', async () => {
+    await page.click('#rcClose').catch(() => {});
+    await page.mouse.click(300, 400);
+    await page.fill('#q', 'ร้านข้าวมันไก่ป้าแดง'); await page.press('#q', 'Enter');
+    await page.waitForSelector('#results [data-gsearch]');
+    await page.click('#results [data-gsearch]');
+    assert.match((await last('load'))[1], /^https:\/\/www\.google\.com\/maps\/search\/%E0%B8%A3.*\/@[\d.]+,[\d.]+,14z$/);
+    await page.evaluate(() => __paneUrl('https://www.google.com/maps/search/x/@13.7,100.5,14z'));
+    assert.equal(await vis(page, '#gmCard'), false, 'no card for a plain search page');
+    await page.evaluate(() => __paneUrl('https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.7512!4d100.5321'));
+    assert.ok(await vis(page, '#gmCard'));
+    assert.equal(await page.textContent('#gmName'), 'ป้าแดง');
+    await page.click('#gmGo');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ป้าแดง');
+    assert.deepEqual(await page.evaluate(() => [__car.nav.dest.lat, __car.nav.dest.lng]), [13.7512, 100.5321]);
+  });
   await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
