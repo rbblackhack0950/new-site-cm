@@ -4,5 +4,6 @@ public abstract class Context {
   public void startActivity(Intent intent) { throw new RuntimeException("Stub!"); }
   public android.content.res.Resources getResources() { throw new RuntimeException("Stub!"); }
   public android.content.pm.PackageManager getPackageManager() { throw new RuntimeException("Stub!"); }
+  public java.io.File getCacheDir() { throw new RuntimeException("Stub!"); }
   public String getPackageName() { throw new RuntimeException("Stub!"); }
 }

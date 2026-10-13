@@ -6,7 +6,9 @@ public class Intent implements android.os.Parcelable {
   public static final int URI_INTENT_SCHEME = 1;
   public static final int FLAG_ACTIVITY_LAUNCH_ADJACENT = 0x00001000;
   public static final int FLAG_ACTIVITY_NEW_TASK = 0x10000000;
+  public static final int FLAG_GRANT_READ_URI_PERMISSION = 0x00000001;
   public Intent(Context packageContext, Class<?> cls) { throw new RuntimeException("Stub!"); }
+  public Intent setDataAndType(android.net.Uri data, String type) { throw new RuntimeException("Stub!"); }
   public Intent setAction(String action) { throw new RuntimeException("Stub!"); }
   public String getAction() { throw new RuntimeException("Stub!"); }
   public int getIntExtra(String name, int defaultValue) { throw new RuntimeException("Stub!"); }

@@ -340,6 +340,10 @@ public class MainActivity extends Activity {
             if (sha256 != null && sha256.length() > 0 && !sha256.equalsIgnoreCase(hex(MessageDigest.getInstance("SHA-256").digest(apk)))) {
                 throw new IOException("ไฟล์ที่ดาวน์โหลดไม่ตรงกับที่ประกาศไว้ ลองใหม่อีกครั้ง");
             }
+            // keep a copy for the installer screen fallback
+            java.io.FileOutputStream copy = new java.io.FileOutputStream(new java.io.File(getCacheDir(), ApkProvider.FILE));
+            copy.write(apk);
+            copy.close();
             updateStatus("install", "กำลังติดตั้ง…");
             PackageInstaller installer = getPackageManager().getPackageInstaller();
             int id = installer.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL));
@@ -371,9 +375,24 @@ public class MainActivity extends Activity {
             updateStatus("confirm", "กด “ติดตั้ง” เพื่อยืนยันการอัปเดต");
         } else if (status == PackageInstaller.STATUS_SUCCESS) {
             updateStatus("done", "อัปเดตแล้ว");
+        } else if (new java.io.File(getCacheDir(), ApkProvider.FILE).exists()) {
+            // background install refused (e.g. HyperOS blocks self-updates): use the system installer screen
+            openInstallerScreen();
         } else {
             String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
             updateStatus("error", "ติดตั้งไม่สำเร็จ" + (msg != null ? " (" + msg + ")" : ""));
+        }
+    }
+
+    private void openInstallerScreen() {
+        Intent view = new Intent(Intent.ACTION_VIEW, null);
+        view.setDataAndType(ApkProvider.URI, "application/vnd.android.package-archive");
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(view);
+            updateStatus("confirm", "เปิดหน้าติดตั้งของระบบแล้ว กด “ติดตั้ง” เพื่ออัปเดต");
+        } catch (Exception e) {
+            updateStatus("error", "ระบบไม่ยอมให้แอปติดตั้งเอง");
         }
     }
 

@@ -38,6 +38,8 @@ cat > "$W/fw/res/values/attrs.xml" <<'XML'
   <attr name="icon" format="reference"/>
   <attr name="name" format="string"/>
   <attr name="exported" format="boolean"/>
+  <attr name="authorities" format="string"/>
+  <attr name="grantUriPermissions" format="boolean"/>
   <attr name="launchMode">
     <enum name="standard" value="0"/><enum name="singleTop" value="1"/>
     <enum name="singleTask" value="2"/><enum name="singleInstance" value="3"/>
@@ -61,6 +63,8 @@ cat > "$W/fw/res/values/attrs.xml" <<'XML'
   <public type="attr" name="icon" id="0x01010002"/>
   <public type="attr" name="name" id="0x01010003"/>
   <public type="attr" name="exported" id="0x01010010"/>
+  <public type="attr" name="authorities" id="0x01010018"/>
+  <public type="attr" name="grantUriPermissions" id="0x0101001b"/>
   <public type="attr" name="launchMode" id="0x0101001d"/>
   <public type="attr" name="configChanges" id="0x0101001f"/>
   <public type="attr" name="minSdkVersion" id="0x0101020c"/>
