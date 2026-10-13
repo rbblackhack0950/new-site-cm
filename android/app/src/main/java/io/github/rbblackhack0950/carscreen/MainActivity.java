@@ -42,6 +42,7 @@ public class MainActivity extends Activity {
     static final String APP_HOST = "rbblackhack0950.github.io";
     static final int REQ_LOCATION = 1;
     static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
+    static final String MAPS_PACKAGE = "com.google.android.apps.maps";
 
     private WebView app;
     private WebView pane;
@@ -262,6 +263,31 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 public void run() { openExternal(url); }
             });
+        }
+
+        /** Open the Google Maps app next to Car Screen (split screen), e.g. google.navigation:q=13.7,100.5 */
+        @JavascriptInterface
+        public void mapsAdjacent(final String uri) {
+            runOnUiThread(new Runnable() {
+                public void run() { launchMapsAdjacent(uri); }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean inSplitScreen() {
+            return isInMultiWindowMode();
+        }
+    }
+
+    private void launchMapsAdjacent(String uri) {
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+        i.setPackage(MAPS_PACKAGE);
+        // LAUNCH_ADJACENT puts Maps in the other half when split screen is available
+        i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(i);
+        } catch (Exception notInstalled) {
+            openExternal("https://www.google.com/maps");
         }
     }
 

@@ -561,7 +561,9 @@ console.log('Android app');
       load: u => __native.push(['load', u]),
       rect: (x, y, w, h, show) => __native.push(['rect', Math.round(x), Math.round(y), Math.round(w), Math.round(h), show]),
       back: () => __native.push(['back']), stop: () => __native.push(['stop']),
-      external: u => __native.push(['external', u])
+      external: u => __native.push(['external', u]),
+      mapsAdjacent: u => __native.push(['maps', u]),
+      inSplitScreen: () => false
     };
   });
   const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
@@ -598,6 +600,32 @@ console.log('Android app');
     assert.equal(await page.inputValue('#webQ'), 'https://m.facebook.com/home.php');
     await page.click('#webPop');
     assert.deepEqual(await last('external'), ['external', 'https://m.facebook.com/home.php']);
+  });
+  await test('Google Maps navigation opens beside Car Screen with the avoid options', async () => {
+    await page.click('#web .homeBtn');
+    await page.click('[data-mode="split"]').catch(() => {});
+    await page.fill('#q', 'เซ็นทรัลเวิลด์'); await page.press('#q', 'Enter');
+    await page.click('#results .ritem');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcOpts'); await page.check('#oToll'); await page.click('#oSave');
+    await page.waitForFunction(() => /เลี่ยง/.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcGmaps');
+    assert.deepEqual(await last('maps'), ['maps', 'google.navigation:q=13.756,100.54&mode=d&avoid=t']);
+    assert.equal(await page.evaluate(() => __car.st.mode), 'media', 'Car Screen keeps only the media side');
+    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(5, 400);
+  });
+  await test('setting: “เริ่มนำทาง” can use Google Maps', async () => {
+    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    await page.check('#sGnav'); await page.click('#sSave');
+    const n = await page.evaluate(() => __native.filter(c => c[0] === 'maps').length);
+    await page.click('#rcGo');
+    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'maps').length), n + 1);
+    assert.equal(await vis(page, '#navBanner'), false, 'built-in navigation not started');
+  });
+  await test('Google Maps tile opens the Maps app beside Car Screen', async () => {
+    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(5, 400);
+    await page.click('.tile:has-text("Google Maps")');
+    assert.deepEqual(await last('maps'), ['maps', 'https://www.google.com/maps']);
   });
   await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
   await ctx.close();

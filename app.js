@@ -12,7 +12,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', ytClientId: '', avoid: { toll: false, motorway: false, ferry: false }, custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
+const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', ytClientId: '', navGoogle: false, avoid: { toll: false, motorway: false, ferry: false }, custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 const save = () => store.set('carscreen', st);
 
@@ -509,11 +509,21 @@ function clearRoute() {
   qEl.value = ''; $('#qClear').hidden = true;
 }
 $('#rcClose').onclick = clearRoute;
-$('#rcGmaps').onclick = () => {
+// Google Maps navigation. In the Android app it opens in the other half of the screen (split screen)
+// with the same avoid options, and Car Screen switches to the media side only.
+function googleNav() {
   const d = nav.dest; if (!d) return;
+  if (native?.mapsAdjacent) {
+    const avoid = [st.avoid.toll && 't', st.avoid.motorway && 'h', st.avoid.ferry && 'f'].filter(Boolean).join('');
+    native.mapsAdjacent(`google.navigation:q=${d.lat},${d.lng}&mode=d${avoid ? '&avoid=' + avoid : ''}`);
+    st.mode = 'media'; save(); applyLayout();
+    toast('เปิด Google Maps นำทางแล้ว ถ้ายังไม่แยกจอ: ปัดขึ้นค้าง → แตะไอคอน Car Screen → แยกหน้าจอ', 7000);
+    return;
+  }
   openExternal(`https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lng}&travelmode=driving&dir_action=navigate`);
-};
-$('#rcGo').onclick = () => { if (nav.route) startNav(); else route(); };
+}
+$('#rcGmaps').onclick = googleNav;
+$('#rcGo').onclick = () => { if (native && st.navGoogle) return googleNav(); if (nav.route) startNav(); else route(); };
 
 // ---------- Turn-by-turn ----------
 function speak(text) {
@@ -699,6 +709,7 @@ $('#tiles').addEventListener('click', e => {
   if (t.id === 'addTile') return addAppSheet();
   const a = $('#tiles')._all[+t.dataset.tile];
   // in the Android app YouTube is the real m.youtube.com, with your account, Shorts and comments
+  if (native?.mapsAdjacent && a.id === 'gmaps') { native.mapsAdjacent('https://www.google.com/maps'); st.mode = 'media'; save(); applyLayout(); return; }
   if (native && a.id === 'youtube') { showView('web'); return loadWeb('https://m.youtube.com'); }
   if (a.view) return showView(a.view);
   if (a.ext) return openExtApp(a);
@@ -1153,6 +1164,7 @@ async function repairApp() {
 function settingsSheet() {
   openSheet(`<h2>ตั้งค่า</h2>
     <label class="switch">เสียงนำทาง<input type="checkbox" id="sVoice" ${st.voice ? 'checked' : ''}></label>
+    ${native?.mapsAdjacent ? `<label class="switch">ปุ่ม “เริ่มนำทาง” ใช้ Google Maps (เปิดแยกจอข้างๆ)<input type="checkbox" id="sGnav" ${st.navGoogle ? 'checked' : ''}></label>` : ''}
     <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
     <label>YouTube API key (ไม่บังคับ ช่วยให้ค้นหาเสถียร)<input type="password" id="sKey" value="${esc(st.ytKey)}" placeholder="AIza…" autocapitalize="off" autocomplete="off"></label>
     <div class="sub">สร้างฟรีที่ Google Cloud Console → เปิด “YouTube Data API v3” → Credentials → API key</div>
@@ -1163,6 +1175,7 @@ function settingsSheet() {
     s.querySelector('#sRepair').onclick = repairApp;
     s.querySelector('#sSave').onclick = () => {
       st.voice = s.querySelector('#sVoice').checked; st.autoNext = s.querySelector('#sNext').checked; st.ytKey = s.querySelector('#sKey').value.trim();
+      if (s.querySelector('#sGnav')) st.navGoogle = s.querySelector('#sGnav').checked;
       save(); setVoiceIcon(); closeSheet(); toast('บันทึกแล้ว', 1500);
     };
     s.querySelector('#sReset').onclick = () => { Object.assign(st, { ratio: 50, swapped: false, stack: null, mode: 'split' }); save(); applyLayout(); closeSheet(); };
