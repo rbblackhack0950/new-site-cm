@@ -21,6 +21,10 @@
         <span class="ic" data-i="search"></span>
         <input id="q" type="search" placeholder="ไปที่ไหน" enterkeyhint="search" aria-label="ค้นหาปลายทาง">
         <button type="button" id="qClear" class="icon-btn" hidden aria-label="ล้าง" data-i="close"></button>
+        <span class="quick">
+          <button type="button" id="qHome" class="icon-btn" aria-label="บ้าน" data-i="home"></button>
+          <button type="button" id="qWork" class="icon-btn" aria-label="ที่ทำงาน" data-i="work"></button>
+        </span>
       </form>
       <div id="results" class="float list" hidden></div>
 
@@ -64,7 +68,7 @@
 
       <button id="recenter" class="float fab autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
       <button id="evBtn" class="float fab autohide" aria-label="ที่ชาร์จรถไฟฟ้า" data-i="bolt"></button>
-      <button id="stopMode" class="float chip-btn" hidden><span class="ic" data-i="addStop"></span>เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่ <span class="ic" data-i="close"></span></button>
+      <button id="stopMode" class="float chip-btn" hidden><span class="ic" data-i="addStop"></span><span id="stopModeT">เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่</span> <span class="ic" data-i="close"></span></button>
 
       <!-- EV charging stations (OpenStreetMap data) -->
       <div id="evCard" class="float card" hidden>
@@ -126,7 +130,6 @@
           <button type="button" id="appBack" class="icon-btn" aria-label="ย้อนกลับ" data-i="back"></button>
           <input id="addrQ" type="text" inputmode="url" autocapitalize="off" placeholder="พิมพ์เว็บหรือคำค้นหา" aria-label="ที่อยู่เว็บ" enterkeyhint="go">
           <button type="button" id="appReload" class="icon-btn" aria-label="โหลดใหม่" data-i="reload"></button>
-          <button type="button" id="appOut" class="icon-btn" aria-label="เปิดนอกแอป" data-i="open"></button>
         </form>
         <div id="paneHost"></div>
       </div>
@@ -142,7 +145,6 @@
         <button data-mode="split" aria-label="แบ่งจอ" data-i="split"></button>
         <button data-mode="media" aria-label="แอปเต็มจอ" data-i="apps"></button>
       </div>
-      <button id="swap" class="bar-btn" aria-label="สลับฝั่ง" data-i="swap"></button>
     </div>
     <div id="dock" class="bar-apps"></div>
     <div id="clock" class="clock"></div>

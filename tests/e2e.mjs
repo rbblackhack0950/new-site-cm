@@ -122,8 +122,9 @@ async function newPage(viewport, { app = 21, ...extra } = {}) {
     const svgIcon = n => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}"><rect width="${n}" height="${n}" fill="#0a84ff"/></svg>` });
     if (u === 'https://www.joox.com/touch-icon.png') return svgIcon(180);
     if (u.includes('t1.gstatic.com/faviconV2') && u.includes('plain.example')) return svgIcon(64);
-    if (u.includes('router.project-osrm.org')) {
-      hit('osrm'); const ex = new URL(u).searchParams.get('exclude');
+    if (u.includes('router.project-osrm.org') && counts.osrmDown) { hit('osrmDownHit'); return route.fulfill({ status: 503, body: 'down' }); }
+    if (u.includes('router.project-osrm.org') || u.includes('routing.openstreetmap.de')) {
+      hit(u.includes('routing.openstreetmap.de') ? 'osrmBackup' : 'osrm'); const ex = new URL(u).searchParams.get('exclude');
       (counts.osrmUrls = counts.osrmUrls || []).push(u);
       if (new URL(u).pathname.split(';').length === 3) return json(ROUTE_STOP);
       if (ex) (counts.exclude = counts.exclude || []).push(ex);
@@ -176,7 +177,7 @@ console.log('Units');
     assert.equal(r.g3, null);
   });
   await test('removed features are gone', async () => {
-    for (const sel of ['#yt', '#ytQ', '#install', '#rcGmaps', '#sLongdo', '#web', '#dockToggle', 'link[rel=manifest]']) assert.equal(await page.locator(sel).count(), 0, sel);
+    for (const sel of ['#yt', '#ytQ', '#install', '#rcGmaps', '#sLongdo', '#web', '#dockToggle', '#swap', '#appOut', 'link[rel=manifest]']) assert.equal(await page.locator(sel).count(), 0, sel);
     assert.equal(await page.evaluate(() => Object.keys(__car.st).filter(k => /yt|longdo|navGoogle|custom|extSeen/i.test(k)).length), 0, 'old settings cleaned up');
   });
   await test('no console errors on load', () => assert.deepEqual(errors, []));
@@ -247,6 +248,14 @@ console.log('Layout');
     assert.ok(b.y >= m.y + m.height, 'bar under the panes');
     assert.equal(await page.locator('#dock .dock-app').count(), 5, 'app shortcuts in the bar');
   });
+  await test('app logos sit in the exact middle of the screen, in every layout', async () => {
+    for (const [w, h] of [[1280, 800], [1000, 600], [1920, 720]]) {
+      await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(100);
+      const d = await box(page, '#dock');
+      assert.ok(Math.abs(d.x + d.width / 2 - w / 2) <= 1.5, `${w}px: logos centre ${d.x + d.width / 2}`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
   await shot(page, '1-home');
   await test('search and recenter fade when idle and return on touch', async () => {
     await page.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 7000 });
@@ -255,12 +264,13 @@ console.log('Layout');
     await page.mouse.click(300, 400);
     assert.equal(await page.evaluate(() => document.body.classList.contains('idle')), false);
   });
-  await test('bar buttons: map only, apps only, split, swap', async () => {
+  await test('bar buttons: map only, apps only, split; swap is in settings', async () => {
     await page.click('#bar [data-mode="map"]'); assert.equal(await vis(page, '#mediaPane'), false);
     await page.click('#bar [data-mode="media"]'); assert.equal(await vis(page, '#mapPane'), false);
     await page.click('#bar [data-mode="split"]');
-    await page.click('#swap'); assert.ok((await box(page, '#mediaPane')).x < (await box(page, '#mapPane')).x, 'swapped');
-    await page.click('#swap');
+    await page.click('#settingsBtn'); await page.click('#sSwap'); await page.click('#sheet [data-close]');
+    assert.ok((await box(page, '#mediaPane')).x < (await box(page, '#mapPane')).x, 'swapped');
+    await page.click('#settingsBtn'); await page.click('#sSwap'); await page.click('#sheet [data-close]');
   });
   await test('drag the divider to resize; remembered after reload', async () => {
     const d = await box(page, '#divider');
@@ -526,6 +536,96 @@ console.log('Charging & stops');
   await ctx.close();
 }
 
+// ---------- places, backup, routing fallback ----------
+console.log('Home, work, backup & routing');
+{
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
+  const sheetClose = async () => { if (await vis(page, '#sheetWrap')) await page.mouse.click(4, 4); }; // tapping outside the sheet
+  await test('home and work buttons ask for a place the first time', async () => {
+    assert.ok(await vis(page, '#qHome') && await vis(page, '#qWork'));
+    await page.click('#qHome');
+    assert.match(await page.textContent('#sheet h2'), /ตั้งบ้าน/);
+    assert.match(await page.textContent('#sheet'), /ตำแหน่งปัจจุบัน/);
+  });
+  await test('choose a place; then one tap navigates there', async () => {
+    await page.click('#sheet [data-pc="0"]');
+    assert.equal(await vis(page, '#sheetWrap'), false);
+    assert.ok(await page.evaluate(() => __car.st.home && Math.abs(__car.st.home.lat - 13.746) < 1e-3));
+    assert.ok(await page.locator('#qHome.set').count());
+    await page.click('#qHome');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'บ้าน');
+    await page.waitForFunction(() => /กม\.|ม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcClose');
+  });
+  await test('work: pick by searching, the place is saved instead of navigated to', async () => {
+    await page.click('#qWork'); await page.click('#pcSearch');
+    assert.ok(await vis(page, '#stopMode'));
+    assert.equal(await page.getAttribute('#q', 'placeholder'), 'ค้นหาที่ทำงาน');
+    await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => __car.st.work);
+    assert.equal(await page.evaluate(() => __car.st.work.lat), 13.756);
+    assert.equal(await vis(page, '#routeCard'), false, 'not navigating');
+    assert.equal(await vis(page, '#stopMode'), false);
+    assert.equal(await page.getAttribute('#q', 'placeholder'), 'ไปที่ไหน');
+  });
+  await test('press and hold changes or deletes; settings list both', async () => {
+    const b = await box(page, '#qWork');
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.waitForTimeout(750); await page.mouse.up();
+    assert.match(await page.textContent('#sheet h2'), /ที่ทำงาน ·/);
+    await page.click('#pcDel');
+    assert.equal(await page.evaluate(() => __car.st.work), null);
+    await page.click('#settingsBtn');
+    assert.match(await page.textContent('#sheet'), /บ้าน[\s\S]*ยังไม่ได้ตั้ง|ที่ทำงาน[\s\S]*ยังไม่ได้ตั้ง/);
+    await page.click('#sheet [data-place="work"]'); await page.click('#pcCancel'); // back to settings
+    assert.match(await page.textContent('#sheet h2'), /ตั้งค่า/);
+    await sheetClose();
+  });
+  await test('backup code restores apps, home and settings on another device', async () => {
+    const code = await page.evaluate(() => { document.querySelector('#settingsBtn').click(); document.querySelector('#sBackup').click(); return document.querySelector('#bkOut').value; });
+    assert.match(code, /^CS1\./);
+    await sheetClose();
+    // wreck the state, then restore
+    await page.evaluate(() => { __car.st.apps.splice(0, 3); __car.st.home = null; __car.st.voice = false; __car.st.ratio = 30; });
+    await page.click('#settingsBtn'); await page.click('#sBackup');
+    await page.fill('#bkIn', 'ข้อความ ' + code + ' จบ'); await page.click('#bkRestore');
+    const r = await page.evaluate(() => ({ apps: __car.st.apps.length, home: !!__car.st.home, voice: __car.st.voice, ratio: __car.st.ratio }));
+    assert.deepEqual(r, { apps: 5, home: true, voice: true, ratio: 55 });
+    assert.equal(await page.locator('#dock .dock-app').count(), 5, 'bar updated');
+  });
+  await test('a bad or hostile code is refused or cleaned', async () => {
+    await page.click('#settingsBtn'); await page.click('#sBackup');
+    await page.fill('#bkIn', 'hello'); await page.click('#bkRestore');
+    assert.match(await page.textContent('#toast'), /รหัสไม่ถูกต้อง/);
+    const evil = 'CS1.' + Buffer.from(JSON.stringify({ ratio: 999, mode: 'x', apps: [{ id: 'a', name: 'ดี', url: 'javascript:alert(1)', logo: 'javascript:1', color: 'red' }, { name: '<b>x</b>', url: 'https://ok.example' }, { url: 'https://noname.example' }], home: { lat: 'a', lng: 1 } })).toString('base64');
+    await page.fill('#bkIn', evil); await page.click('#bkRestore');
+    const r = await page.evaluate(() => ({ ratio: __car.st.ratio, mode: __car.st.mode, apps: __car.st.apps }));
+    assert.equal(r.ratio, 80); assert.equal(r.mode, 'split');
+    assert.deepEqual(r.apps.map(a => [a.name, a.url, a.logo, a.color]), [['ดี', '', undefined, undefined], ['<b>x</b>', 'https://ok.example', undefined, undefined]]);
+    assert.equal(await page.locator('#dock b').count(), 0, 'names are escaped');
+    await page.evaluate(() => { __car.st.apps.splice(0); });
+    await page.click('#settingsBtn'); await page.click('#sRestoreApps'); await sheetClose();
+  });
+  await test('routing: when the main server is down the backup one answers, and is tried first next time', async () => {
+    counts.osrmDown = true; const before = counts.osrmBackup || 0;
+    await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    assert.ok(counts.osrmDownHit >= 1 && counts.osrmBackup > before);
+    counts.osrmDownHit = 0; await page.click('#rcClose');
+    await page.fill('#q', '13.756, 100.541'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    assert.equal(counts.osrmDownHit || 0, 0, 'backup remembered');
+    counts.osrmDown = false; await page.click('#rcClose');
+  });
+  await test('an idle page does not poll the layout', async () => {
+    await page.evaluate(() => { window.__gbr = 0; const f = Element.prototype.getBoundingClientRect; Element.prototype.getBoundingClientRect = function () { window.__gbr++; return f.call(this); }; });
+    await page.waitForTimeout(2500);
+    const n = await page.evaluate(() => window.__gbr);
+    assert.ok(n <= 12, 'layout reads in 2.5 s: ' + n);
+  });
+  await test('no console errors with places and backup', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
 // ---------- apps side ----------
 console.log('Apps');
 {
@@ -557,7 +657,6 @@ console.log('Apps');
     await page.fill('#addrQ', 'ร้านกาแฟ'); await page.press('#addrQ', 'Enter');
     assert.deepEqual(await last('paneLoad', 0), ['paneLoad', 0, 'https://www.google.com/search?q=' + encodeURIComponent('ร้านกาแฟ')]);
     await page.click('#appBack'); assert.ok(await last('back'));
-    await page.click('#appOut'); assert.match((await last('external'))[1], /google\.com\/search/);
   });
   await test('Netflix loads in the pane (no app, no Chrome)', async () => {
     await page.click('#appHome');

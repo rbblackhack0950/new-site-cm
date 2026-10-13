@@ -26,7 +26,7 @@ const DEFAULT_APPS = [
   { id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', letter: 'S' },
   { id: 'web', name: 'เว็บ', url: '', color: '#2c2d31', icon: 'globe' }
 ];
-const DEF = { ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
+const DEF = { ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 // first run of this version: start from the defaults plus apps added earlier (st.custom)
 if (!Array.isArray(st.apps)) {
@@ -62,6 +62,8 @@ const P = {
   add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z',
   bolt: 'M7 2v11h3v9l7-12h-4l4-8z',
   addStop: 'M13 7h-2v3H8v2h3v3h2v-3h3v-2h-3zm-1-5C7.8 2 4 5.22 4 10.2c0 3.32 2.67 7.25 8 11.8 5.33-4.55 8-8.48 8-11.8C20 5.22 16.2 2 12 2m0 18c-4.1-3.6-6-6.6-6-9.8C6 6.6 8.7 4 12 4s6 2.6 6 6.2c0 3.2-1.9 6.2-6 9.8',
+  home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+  work: 'M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2m-6 0h-4V4h4z',
   history: 'M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.95 8.95 0 0 0 13 21a9 9 0 0 0 0-18m-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z',
   // maneuver arrows
   up: 'M11 21V7.83l-4.59 4.58L5 11l7-7 7 7-1.41 1.41L13 7.83V21z',
@@ -95,10 +97,10 @@ function snack(msg, undo) {
 $('#snackUndo').onclick = () => { snackUndo?.(); snackUndo = null; $('#snack').hidden = true; };
 function openSheet(html, bind) {
   const s = $('#sheet'); s.innerHTML = html; paintIcons(s);
-  $('#sheetWrap').hidden = false; bind?.(s);
+  $('#sheetWrap').hidden = false; requestSync(); bind?.(s);
   s.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeSheet));
 }
-const closeSheet = () => { $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; };
+const closeSheet = () => { $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; requestSync(); };
 $('#sheetWrap').addEventListener('click', e => { if (e.target.id === 'sheetWrap') closeSheet(); });
 
 let idleT;
@@ -132,11 +134,11 @@ function applyLayout() {
   $$('#bar .seg button').forEach(b => b.classList.toggle('on', b.dataset.mode === st.mode));
   root.style.setProperty('--ratio', st.ratio);
   map && setTimeout(() => map.invalidateSize(), 60);
+  requestSync();
 }
 function setMode(m) { st.mode = m; save(); applyLayout(); }
 addEventListener('resize', applyLayout);
 $$('#bar .seg button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
-$('#swap').onclick = () => { st.swapped = !st.swapped; save(); applyLayout(); };
 
 const div = $('#divider');
 div.addEventListener('pointerdown', e => {
@@ -148,10 +150,11 @@ div.addEventListener('pointerdown', e => {
     if (st.swapped) p = 1 - p;
     st.ratio = Math.round(Math.min(80, Math.max(20, p * 100)));
     root.style.setProperty('--ratio', st.ratio);
+    requestSync();
   };
   const up = () => {
     div.removeEventListener('pointermove', move); div.removeEventListener('pointerup', up); div.removeEventListener('pointercancel', up);
-    div.classList.remove('drag'); save(); map?.invalidateSize();
+    div.classList.remove('drag'); save(); map?.invalidateSize(); requestSync();
   };
   div.addEventListener('pointermove', move); div.addEventListener('pointerup', up); div.addEventListener('pointercancel', up);
 });
@@ -240,7 +243,9 @@ function arrowFor(step) {
 // ===================================================================
 // OpenStreetMap tiles (no key needed), darkened with a CSS filter for night-friendly driving
 const TILE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+// the public OSRM demo server has no guarantees, so a second public server stands by
+const ROUTERS = ['https://router.project-osrm.org/route/v1/driving/', 'https://routing.openstreetmap.de/routed-car/route/v1/driving/'];
+let routerFirst = 0; // the one that worked last goes first
 const REFOLLOW_MS = 8000;
 const AVOID = ['toll', 'motorway', 'ferry'];
 const AVOID_TXT = { toll: 'ทางเสียค่าผ่านทาง', motorway: 'ทางด่วน', ferry: 'เรือข้ามฟาก' };
@@ -252,7 +257,7 @@ const nav = { dest: null, stops: [], adding: false, route: null, active: false, 
 
 if (L_) {
   map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
-  L_.tileLayer(TILE, { maxZoom: 19, className: 'dark-tiles', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+  L_.tileLayer(TILE, { maxZoom: 19, className: 'dark-tiles', updateWhenZooming: false, keepBuffer: 2, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
   map.attributionControl.setPrefix(false);
   // panning pauses follow mode; while navigating it snaps back after a few seconds
   let refollowT;
@@ -260,7 +265,11 @@ if (L_) {
     setFollow(false); clearTimeout(refollowT);
     if (nav.active) refollowT = setTimeout(() => nav.active && !follow && setFollow(true), REFOLLOW_MS);
   });
-  map.on('moveend', () => store.set('carscreen.view', [map.getCenter().lat, map.getCenter().lng]));
+  // remembering the view is a storage write, so not on every GPS pan
+  let viewT;
+  const saveView = () => { clearTimeout(viewT); store.set('carscreen.view', [map.getCenter().lat, map.getCenter().lng]); };
+  map.on('moveend', () => { clearTimeout(viewT); viewT = setTimeout(saveView, 1500); });
+  addEventListener('pagehide', saveView);
   map.on('contextmenu', e => pickDest({ lat: e.latlng.lat, lng: e.latlng.lng, name: 'ตำแหน่งที่เลือก', sub: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}` }));
 }
 
@@ -276,12 +285,15 @@ function setFollow(on) {
 }
 $('#recenter').onclick = () => { if (!here.ll) startGeo(true); setFollow(true); };
 
+let meEl;
 function drawMe() {
   if (!map || !here.ll) return;
-  const html = `<div class="me${here.heading != null ? ' dir' : ''}"><b style="transform:rotate(${here.heading || 0}deg)"></b><i></i></div>`;
-  const icon = L_.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] });
-  if (!meMarker) meMarker = L_.marker(here.ll, { icon, interactive: false, zIndexOffset: 1000 }).addTo(map);
-  else { meMarker.setLatLng(here.ll); meMarker.setIcon(icon); }
+  if (!meMarker) {
+    meMarker = L_.marker(here.ll, { icon: L_.divIcon({ className: '', html: '<div class="me"><b></b><i></i></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
+    meEl = meMarker.getElement().firstChild;
+  } else meMarker.setLatLng(here.ll);
+  meEl.classList.toggle('dir', here.heading != null);
+  meEl.firstChild.style.transform = `rotate(${here.heading || 0}deg)`;
 }
 
 let geoId = null;
@@ -301,7 +313,7 @@ function onPos(p) {
   here.ll = ll; here.acc = p.coords.accuracy; here.speed = p.coords.speed;
   drawMe();
   if (first && follow && !nav.route) map?.setView(ll, 15);
-  else if (follow && map) map.panTo(ll, { animate: true, duration: .5 });
+  else if (follow && map && !nav.active) map.panTo(ll, { animate: true, duration: .5 }); // while navigating, navTick moves the map
   if (nav.active) navTick();
 }
 
@@ -419,6 +431,7 @@ function gmapsSearch(q) {
 // Destination & route
 // ===================================================================
 function pickDest(d) {
+  if (placePick) return finishPlace(d);
   if (nav.adding && nav.dest) return addStop(d);
   gmClose(); showResults('');
   qEl.value = d.name; $('#qClear').hidden = false;
@@ -448,18 +461,24 @@ async function route(reroute) {
   nav.routing = true;
   const pts = [here.ll, ...nav.stops.map(s => [s.lat, s.lng]), [nav.dest.lat, nav.dest.lng]];
   const many = nav.stops.length > 0; // OSRM offers alternatives only between two points
-  const base = `${OSRM}${pts.map(p => p[1] + ',' + p[0]).join(';')}?overview=false&steps=true&geometries=geojson&alternatives=${reroute || many ? 'false' : 3}`;
+  const coords = pts.map(p => p[1] + ',' + p[0]).join(';');
+  const q = `?overview=false&steps=true&geometries=geojson&alternatives=${reroute || many ? 'false' : 3}`;
   const want = AVOID.filter(k => st.avoid[k]);
-  // the public OSRM server may only accept one class per request: try all, then one at a time, then none
+  // a server may only accept one class per request: try all, then one at a time, then none.
+  // A server that is down (timeout, 5xx) is skipped for the next one; a refused request (4xx) is not.
   const tries = [want, ...(want.length > 1 ? want.map(k => [k]) : []), ...(want.length ? [[]] : [])];
   try {
     let j, used, last;
-    for (const ex of tries) {
-      try {
-        j = await getJSON(base + (ex.length ? '&exclude=' + ex.join(',') : ''), 12000);
-        if (j.code === 'Ok' && j.routes?.length) { used = ex; break; }
-        last = new Error(j.code);
-      } catch (e) { last = e; }
+    search: for (let n = 0; n < ROUTERS.length; n++) {
+      const ri = (routerFirst + n) % ROUTERS.length;
+      for (const ex of tries) {
+        try {
+          j = await getJSON(ROUTERS[ri] + coords + q + (ex.length ? '&exclude=' + ex.join(',') : ''), n ? 15000 : 9000);
+          if (j.code === 'Ok' && j.routes?.length) { used = ex; routerFirst = ri; break search; }
+          last = new Error(j.code);
+        } catch (e) { last = e; if (!/^HTTP 4/.test(e.message)) break; }
+      }
+      if (last?.message === 'NoRoute') break;
     }
     if (!used) throw last;
     const missed = want.filter(k => !used.includes(k));
@@ -570,6 +589,7 @@ $('#rcGo').onclick = () => { if (nav.route) startNav(); else route(); };
 // Stops along the way
 // ===================================================================
 function setStopMode(on) {
+  if (on) setPlacePick(null);
   nav.adding = on;
   $('#stopMode').hidden = !on;
   qEl.placeholder = on ? 'ค้นหาจุดแวะ' : 'ไปที่ไหน';
@@ -577,7 +597,7 @@ function setStopMode(on) {
   if (on) { qEl.value = ''; $('#qClear').hidden = true; }
   else if (nav.dest && !qEl.value) qEl.value = nav.dest.name;
 }
-$('#stopMode').onclick = () => setStopMode(false);
+$('#stopMode').onclick = () => { setStopMode(false); setPlacePick(null); };
 function addStop(d) {
   setStopMode(false); gmClose(); showResults('');
   nav.stops.push({ lat: d.lat, lng: d.lng, name: d.name, sub: d.sub });
@@ -615,6 +635,144 @@ $('#rcAddStop').onclick = () => {
     s.querySelectorAll('[data-asrecent]').forEach(b => b.onclick = () => { closeSheet(); addStop(st.recentDest[+b.dataset.asrecent]); });
   });
 };
+
+// ===================================================================
+// Home & work: one tap to navigate, press and hold to change
+// ===================================================================
+const PLACE = { home: { label: 'บ้าน' }, work: { label: 'ที่ทำงาน' } };
+let placePick = null; // while set, the next place chosen (search, map, Google Maps) becomes home/work instead of a destination
+function setPlacePick(kind) {
+  placePick = kind;
+  $('#stopMode').hidden = !kind && !nav.adding;
+  $('#stopModeT').textContent = kind ? `เลือกที่ตั้ง${PLACE[kind].label}: ค้นหาหรือกดค้างบนแผนที่` : 'เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่';
+  qEl.placeholder = kind ? 'ค้นหา' + PLACE[kind].label : nav.adding ? 'ค้นหาจุดแวะ' : 'ไปที่ไหน';
+  $('#gmPickGo').lastChild.textContent = kind ? 'ตั้งเป็น' + PLACE[kind].label : nav.adding ? 'แวะที่นี่' : 'ไปที่นี่';
+  if (kind) { qEl.value = ''; $('#qClear').hidden = true; }
+  else if (nav.dest && !qEl.value) qEl.value = nav.dest.name;
+}
+function setPlace(kind, d) {
+  st[kind] = d ? { lat: d.lat, lng: d.lng, name: d.name } : null;
+  save(); renderQuick();
+}
+function finishPlace(d) {
+  const kind = placePick;
+  qEl.value = ''; $('#qClear').hidden = true;
+  setPlacePick(null); gmClose(); showResults('');
+  setPlace(kind, { ...d, name: Object.values(PLACE).some(p => p.label === d.name) && d.sub ? d.sub : d.name });
+  toast(`ตั้ง${PLACE[kind].label}เป็น ${st[kind].name}`, 3000);
+}
+function goPlace(kind) {
+  setPlacePick(null);
+  const p = st[kind];
+  if (!p) return placeSheet(kind);
+  qEl.blur(); showResults('');
+  pickDest({ lat: p.lat, lng: p.lng, name: PLACE[kind].label, sub: p.name });
+}
+function placeSheet(kind, back) {
+  const label = PLACE[kind].label, cur = st[kind], cands = [];
+  const labels = Object.values(PLACE).map(p => p.label);
+  if (here.ll) cands.push({ icon: 'loc', t: 'ตำแหน่งปัจจุบัน', d: { lat: here.ll[0], lng: here.ll[1], name: 'ตำแหน่งที่บันทึกไว้' } });
+  if (nav.dest) cands.push({ icon: 'flag', t: nav.dest.name, sub: 'ปลายทางที่เลือกอยู่', d: nav.dest });
+  st.recentDest.slice(0, 6).forEach(r => cands.push({ icon: 'history', t: r.name, sub: r.sub, d: r }));
+  const done = () => back ? settingsSheet() : closeSheet();
+  openSheet(`<h2>${cur ? `${label} · ${esc(cur.name)}` : `ตั้ง${label}`}</h2>
+    <button class="set-row ritem" id="pcSearch"><span class="ic" data-i="search"></span><div class="grow"><div class="t">ค้นหาสถานที่</div><div class="muted">หรือกดค้างบนแผนที่</div></div></button>
+    ${cands.map((c, i) => `<button class="set-row ritem" data-pc="${i}"><span class="ic" data-i="${c.icon}"></span><div class="grow"><div class="t ellipsis">${esc(c.t)}</div>${c.sub ? `<div class="muted ellipsis">${esc(c.sub)}</div>` : ''}</div></button>`).join('')}
+    <div class="sheet-actions">${cur ? '<button class="btn" id="pcDel">ลบ' + label + '</button>' : ''}<button class="btn" id="pcCancel">ยกเลิก</button></div>`, sh => {
+    sh.querySelector('#pcCancel').onclick = done;
+    sh.querySelector('#pcSearch').onclick = () => { closeSheet(); setPlacePick(kind); qEl.focus(); };
+    sh.querySelector('#pcDel')?.addEventListener('click', () => { setPlace(kind, null); done(); });
+    sh.querySelectorAll('[data-pc]').forEach(b => b.onclick = () => {
+      const d = cands[+b.dataset.pc].d;
+      setPlace(kind, { ...d, name: labels.includes(d.name) && d.sub ? d.sub : d.name });
+      toast(`ตั้ง${label}แล้ว`, 2000); done();
+    });
+  });
+}
+function renderQuick() {
+  for (const [id, kind] of [['qHome', 'home'], ['qWork', 'work']]) {
+    const b = $('#' + id);
+    b.classList.toggle('set', !!st[kind]);
+    b.setAttribute('aria-label', st[kind] ? `ไป${PLACE[kind].label}: ${st[kind].name}` : `ตั้ง${PLACE[kind].label}`);
+  }
+}
+for (const [id, kind] of [['qHome', 'home'], ['qWork', 'work']]) {
+  const b = $('#' + id); let t, long = false;
+  b.addEventListener('pointerdown', () => { long = false; t = setTimeout(() => { long = true; placeSheet(kind); }, 600); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => clearTimeout(t)));
+  b.addEventListener('click', () => { if (long) { long = false; return; } goPlace(kind); });
+}
+
+// ===================================================================
+// Backup: one text code carries the settings, apps, home/work and recent places to another device
+// ===================================================================
+const BACKUP_KEYS = ['ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
+function backupCode() {
+  const o = {};
+  BACKUP_KEYS.forEach(k => o[k] = st[k]);
+  o.apps = st.apps.map(({ id, name, url, color, icon, letter, logo, logoFull }) => ({ id, name, url, color, icon, letter, logo, logoFull }));
+  return 'CS1.' + btoa(unescape(encodeURIComponent(JSON.stringify(o))));
+}
+// accepts only what the app itself would have written; anything else in the code is dropped
+function readBackup(text) {
+  const m = String(text).match(/CS1\.([A-Za-z0-9+/=_-]+)/);
+  if (!m) throw new Error('รหัสไม่ถูกต้อง');
+  let o; try { o = JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch { throw new Error('อ่านรหัสไม่ได้'); }
+  if (!o || typeof o !== 'object') throw new Error('อ่านรหัสไม่ได้');
+  const str = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
+  const web = v => { try { const u = new URL(v); return /^https?:$/.test(u.protocol) && v.length <= 500 ? v : ''; } catch { return ''; } };
+  const place = v => v && Number.isFinite(v.lat) && Number.isFinite(v.lng) && Math.abs(v.lat) <= 90 && Math.abs(v.lng) <= 180
+    ? { lat: v.lat, lng: v.lng, name: str(v.name, 80) || 'ตำแหน่งที่บันทึกไว้' } : null;
+  const out = {};
+  if (Number.isFinite(o.ratio)) out.ratio = Math.min(80, Math.max(20, Math.round(o.ratio)));
+  for (const k of ['swapped', 'voice', 'evPins']) if (typeof o[k] === 'boolean') out[k] = o[k];
+  if (o.stack === null || typeof o.stack === 'boolean') out.stack = o.stack;
+  if (['map', 'split', 'media'].includes(o.mode)) out.mode = o.mode;
+  if (o.avoid && typeof o.avoid === 'object') out.avoid = { toll: !!o.avoid.toll, motorway: !!o.avoid.motorway, ferry: !!o.avoid.ferry };
+  if (Array.isArray(o.recentDest)) out.recentDest = o.recentDest.slice(0, 8).map(r => r && place(r) && { ...place(r), sub: str(r.sub, 120) }).filter(Boolean);
+  for (const k of ['home', 'work']) if (k in o) out[k] = place(o[k]);
+  if (Array.isArray(o.apps)) {
+    const ids = new Set();
+    const apps = o.apps.slice(0, 40).map((a, i) => {
+      if (!a || !str(a.name, 40).trim()) return null;
+      let id = str(a.id, 40).replace(/[^\w-]/g, '') || 'c' + i; while (ids.has(id)) id += 'x'; ids.add(id);
+      const r = { id, name: str(a.name, 40).trim(), url: a.url ? web(a.url) : '' };
+      if (/^#[0-9a-f]{3,8}$/i.test(a.color)) r.color = a.color;
+      if (a.icon && Object.prototype.hasOwnProperty.call(P, a.icon)) r.icon = a.icon;
+      if (str(a.letter, 2)) r.letter = str(a.letter, 2);
+      if (a.logo && web(a.logo)) { r.logo = a.logo; r.logoFull = !!a.logoFull; }
+      return r;
+    }).filter(Boolean);
+    if (apps.length) out.apps = apps;
+  }
+  if (!Object.keys(out).length) throw new Error('ไม่พบการตั้งค่าในรหัสนี้');
+  return out;
+}
+function applyBackup(out) {
+  Object.assign(st, out);
+  if (media.app) closeApp(true);
+  save(); applyLayout(); renderApps(); setVoiceIcon(); optsBadge(); renderQuick(); clearPins(); updatePins();
+}
+function backupSheet() {
+  const code = backupCode();
+  openSheet(`<h2>สำรอง / ย้ายการตั้งค่า</h2>
+    <p class="muted">คัดลอกรหัสนี้ไปวางในอีกเครื่อง จะได้แอป บ้าน/ที่ทำงาน ปลายทางล่าสุด และการตั้งค่าเหมือนกัน</p>
+    <textarea id="bkOut" readonly rows="3">${esc(code)}</textarea>
+    <div class="sheet-actions" style="margin-top:8px"><button class="btn" id="bkCopy">คัดลอกรหัส</button></div>
+    <label class="field">วางรหัสจากอีกเครื่องเพื่อกู้คืน<textarea id="bkIn" rows="3" placeholder="CS1.…" autocapitalize="off" spellcheck="false"></textarea></label>
+    <div class="sheet-actions"><button class="btn" id="bkBack">ย้อนกลับ</button><button class="btn primary" id="bkRestore">กู้คืน</button></div>`, sh => {
+    sh.querySelector('#bkCopy').onclick = async () => {
+      const ta = sh.querySelector('#bkOut');
+      try { await navigator.clipboard.writeText(code); } catch { ta.select(); try { document.execCommand('copy'); } catch {} }
+      toast('คัดลอกรหัสแล้ว', 2000);
+    };
+    sh.querySelector('#bkBack').onclick = settingsSheet;
+    sh.querySelector('#bkRestore').onclick = () => {
+      try { applyBackup(readBackup(sh.querySelector('#bkIn').value)); closeSheet(); toast('กู้คืนการตั้งค่าแล้ว', 3000); }
+      catch (e) { toast(e.message, 3500); }
+    };
+  });
+}
 
 // ===================================================================
 // EV charging stations (OpenStreetMap via Overpass): near me, or along the route
@@ -655,30 +813,33 @@ function nearRoute(p) {
   return best;
 }
 // Charging stations always on the map (bundled DC list): zoomed in enough, the ones in view
-const PIN_ZOOM = 11, PIN_MAX = 150;
+const PIN_ZOOM = 11, PIN_MAX = 100;
 const pinLayer = map ? L_.layerGroup().addTo(map) : null;
-let dcById = new Map();
+let dcById = new Map(), pinKey = '', pinT;
+const clearPins = () => { pinKey = ''; pinLayer?.clearLayers(); };
 const stationChips = s => s.sockets.map(k => `<span class="chip${k.dc ? ' ok' : ''}">${esc(k.label)}${k.kw ? ' ' + k.kw + ' kW' : ''}</span>`).join('');
 async function updatePins() {
   if (!map) return;
-  if (!st.evPins || ev.open || map.getZoom() < PIN_ZOOM) return pinLayer.clearLayers();
+  if (!st.evPins || ev.open || map.getZoom() < PIN_ZOOM) return clearPins();
   const local = await loadDc();
-  // clear only now: overlapping calls would otherwise each add a full set
-  pinLayer.clearLayers();
-  if (!local.length || ev.open || !st.evPins || map.getZoom() < PIN_ZOOM) return;
+  if (!local.length || ev.open || !st.evPins || map.getZoom() < PIN_ZOOM) return clearPins();
   dcById = new Map(local.map(s => [s.id, s]));
   const b = map.getBounds(), c = map.getCenter();
-  local.filter(s => b.contains([s.lat, s.lng])).map(s => [s, (s.lat - c.lat) ** 2 + (s.lng - c.lng) ** 2])
-    .sort((x, y) => x[1] - y[1]).slice(0, PIN_MAX).forEach(([s]) => {
-      const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin dc sm">${svg('bolt')}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) });
-      m.bindPopup(() => `<div class="pp-name">${esc(s.name)}</div><div class="muted">${esc(s.op)}</div><div class="chips">${stationChips(s)}</div>
-        <button class="btn primary" data-${nav.dest ? 'pstop' : 'pgo'}="${s.id}">${nav.dest ? 'แวะ' : 'ไปที่นี่'}</button>`, { className: 'ev-popup', closeButton: false, autoPanPadding: [20, 20] });
-      pinLayer.addLayer(m);
-    });
+  const shown = local.filter(s => b.contains([s.lat, s.lng])).map(s => [s, (s.lat - c.lat) ** 2 + (s.lng - c.lng) ** 2])
+    .sort((x, y) => x[1] - y[1]).slice(0, PIN_MAX).map(x => x[0]);
+  const key = shown.map(s => s.id).join();
+  if (key === pinKey) return; // same stations as before: leave the pins alone
+  pinKey = key; pinLayer.clearLayers();
+  shown.forEach(s => {
+    const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin dc sm">${svg('bolt')}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) });
+    m.bindPopup(() => `<div class="pp-name">${esc(s.name)}</div><div class="muted">${esc(s.op)}</div><div class="chips">${stationChips(s)}</div>
+      <button class="btn primary" data-${nav.dest ? 'pstop' : 'pgo'}="${s.id}">${nav.dest ? 'แวะ' : 'ไปที่นี่'}</button>`, { className: 'ev-popup', closeButton: false, autoPanPadding: [20, 20] });
+    pinLayer.addLayer(m);
+  });
 }
 if (map) {
-  map.on('moveend', updatePins);
-  setTimeout(updatePins, 0);
+  map.on('moveend', () => { clearTimeout(pinT); pinT = setTimeout(updatePins, 250); });
+  if (window.requestIdleCallback) requestIdleCallback(updatePins, { timeout: 2500 }); else setTimeout(updatePins, 1500); // the station list is not needed for the first paint
   $('#map').addEventListener('click', e => {
     const b = e.target.closest('[data-pgo],[data-pstop]'); if (!b) return;
     const s = dcById.get(b.dataset.pgo || b.dataset.pstop); if (!s) return;
@@ -687,7 +848,7 @@ if (map) {
   });
 }
 function openEv(where) {
-  ev.open = true; pinLayer?.clearLayers(); ev.where = where === 'route' && nav.route ? 'route' : 'near';
+  ev.open = true; clearPins(); ev.where = where === 'route' && nav.route ? 'route' : 'near';
   $('#evCard').hidden = false; $('#mapPane').classList.add('ev-open');
   $('#evWhere [data-where="route"]').disabled = !nav.route;
   loadEv();
@@ -849,6 +1010,8 @@ function stopNav(silent) {
 $('#nfStop').onclick = () => { stopNav(); clearRoute(); };
 
 let progAlong = 0;
+const setText = (el, v) => { if (el.textContent !== v) el.textContent = v; };
+const setHtml = (el, h) => { if (el._h !== h || !el.firstChild) { el._h = h; el.innerHTML = h; } };
 function navTick() {
   if (!nav.route || !here.ll) return;
   const { line, cum } = nav;
@@ -891,13 +1054,13 @@ function navTick() {
   while (i < nav.steps.length - 1 && nav.stepAt[i] <= along + 8) i++;
   nav.step = i;
   const step = nav.steps[i], dist = nav.stepAt[i] - along;
-  $('#nbArrow').innerHTML = arrowFor(step);
-  $('#nbDist').textContent = fmtDist(dist);
-  $('#nbText').textContent = instr(step);
+  setHtml($('#nbArrow'), arrowFor(step));
+  setText($('#nbDist'), fmtDist(dist));
+  setText($('#nbText'), instr(step));
   const nxt = nav.steps[i + 1];
   const then = nxt && nav.stepAt[i + 1] - nav.stepAt[i] < 250;
   $('#nbThen').hidden = !then;
-  if (then) $('#nbThen').innerHTML = `จากนั้น ${arrowFor(nxt)} ${esc(instr(nxt))}`;
+  if (then) setHtml($('#nbThen'), `จากนั้น ${arrowFor(nxt)} ${esc(instr(nxt))}`);
 
   // voice prompts at ~1 km, ~300 m and at the turn
   const said = nav.said[i] || (nav.said[i] = {});
@@ -907,9 +1070,9 @@ function navTick() {
   else if (dist <= 1100 && dist > 700 && legLen > 1500 && !said.far) { said.far = 1; speak(`อีก ${sayDist(dist)} ${instr(step)}`); }
 
   const secs = nav.route.duration * (remain / Math.max(1, total));
-  $('#nfEta').textContent = 'ถึง ' + fmtClock(new Date(Date.now() + secs * 1000));
-  $('#nfMeta').textContent = `${fmtDur(secs)} · ${fmtDist(remain)}`;
-  $('#speed b').textContent = here.speed != null && here.speed >= 0 ? Math.round(here.speed * 3.6) : '–';
+  setText($('#nfEta'), 'ถึง ' + fmtClock(new Date(Date.now() + secs * 1000)));
+  setText($('#nfMeta'), `${fmtDur(secs)} · ${fmtDist(remain)}`);
+  setText($('#speed b'), String(here.speed != null && here.speed >= 0 ? Math.round(here.speed * 3.6) : '–'));
   if (follow && map) map.setView(here.ll, Math.max(map.getZoom(), 16), { animate: true });
 }
 
@@ -1043,7 +1206,6 @@ function closeApp(stop) {
 $('#appHome').onclick = () => closeApp(false);
 $('#appBack').onclick = () => native?.back?.();
 $('#appReload').onclick = () => { if (media.url) nLoad(0, media.url); };
-$('#appOut').onclick = () => { if (media.url) native?.external(media.url); };
 $('#addr').onsubmit = e => {
   e.preventDefault();
   const v = $('#addrQ').value.trim(); if (!v) return;
@@ -1064,7 +1226,14 @@ function syncPane() {
   media.key = key;
   try { nRect(0, r.left, r.top, r.width, r.height, show); } catch {}
 }
-if (native) setInterval(() => { syncPane(); syncGm(); }, 120);
+// positions are re-sent when the layout changes (requestSync), when the hosts resize, and once a second as a safety net
+function syncNative() { syncPane(); syncGm(); }
+let syncQ = 0;
+function requestSync() { if (native && !syncQ) syncQ = requestAnimationFrame(() => { syncQ = 0; syncNative(); }); }
+if (native) {
+  if (window.ResizeObserver) { const ro = new ResizeObserver(requestSync); ro.observe($('#paneHost')); ro.observe($('#gmHost')); }
+  setInterval(syncNative, 1000);
+}
 
 // ===================================================================
 // Android app updates: compare the installed APK with dist/version.json
@@ -1123,24 +1292,29 @@ async function repairApp() {
 function settingsSheet() {
   const layout = st.stack == null ? 'auto' : st.stack ? 'stack' : 'side';
   const segBtn = (v, t) => `<button data-layout="${v}" class="${layout === v ? 'on' : ''}">${t}</button>`;
+  const placeRow = k => `<button class="set-row ritem" data-place="${k}"><span class="ic" data-i="${k}"></span><div class="grow"><div class="t">${PLACE[k].label}</div><div class="muted ellipsis">${st[k] ? esc(st[k].name) : 'ยังไม่ได้ตั้ง'}</div></div><span class="muted">${st[k] ? 'แก้ไข' : 'ตั้งค่า'}</span></button>`;
   openSheet(`<h2>ตั้งค่า</h2>
     <h3>การนำทาง</h3>
+    ${placeRow('home')}${placeRow('work')}
     <label class="set-row"><span class="t">เสียงนำทาง</span><input type="checkbox" class="toggle" id="sVoice" ${st.voice ? 'checked' : ''}></label>
     <label class="set-row"><span class="t">แสดงที่ชาร์จบนแผนที่</span><input type="checkbox" class="toggle" id="sEvPins" ${st.evPins ? 'checked' : ''}></label>
     <h3>หน้าจอ</h3>
     <div class="set-row"><span class="t">แบ่งจอ</span><div class="seg">${segBtn('auto', 'อัตโนมัติ')}${segBtn('side', 'ซ้าย-ขวา')}${segBtn('stack', 'บน-ล่าง')}</div></div>
-    <div class="set-row"><span class="t">ขนาดและตำแหน่งจอ</span><button class="btn" id="sResetLayout">คืนค่า</button></div>
-    <h3>แอป</h3>
-    <div class="set-row"><div class="grow"><div class="t">แอปเริ่มต้น</div><div class="muted">เพิ่มแอปที่ลบไปกลับมา</div></div><button class="btn" id="sRestoreApps">คืนค่า</button></div>
-    ${native?.appVersion ? `<h3>Car Screen สำหรับ Android</h3>${appUpdHtml()}` : ''}
-    <div class="set-row"><div class="grow"><div class="t">ซ่อมแอป</div><div class="muted">ล้างไฟล์ที่เก็บไว้แล้วโหลดใหม่ ใช้เมื่อเปิดไม่ขึ้นหรือค้าง</div></div><button class="btn" id="sRepair">ซ่อม</button></div>
+    <div class="set-row"><span class="t">สลับฝั่งแผนที่ / แอป</span><button class="btn" id="sSwap">สลับ</button></div>
+    <h3>ข้อมูล</h3>
+    <div class="set-row"><div class="grow"><div class="t">สำรอง / ย้ายการตั้งค่า</div><div class="muted">คัดลอกไปใช้อีกเครื่อง</div></div><button class="btn" id="sBackup">เปิด</button></div>
+    ${native?.appVersion ? appUpdHtml() : ''}
+    <div class="adv"><button class="btn small-btn" id="sResetLayout">คืนค่าหน้าจอ</button><button class="btn small-btn" id="sRestoreApps">คืนแอปเริ่มต้น</button><button class="btn small-btn" id="sRepair">ซ่อมแอป</button></div>
     <div class="sheet-actions"><button class="btn primary" data-close>เสร็จ</button></div>`, s => {
+    s.querySelectorAll('[data-place]').forEach(b => b.onclick = () => placeSheet(b.dataset.place, true));
     s.querySelector('#sVoice').onchange = e => { st.voice = e.target.checked; save(); setVoiceIcon(); };
     s.querySelector('#sEvPins').onchange = e => { st.evPins = e.target.checked; save(); updatePins(); };
     s.querySelectorAll('[data-layout]').forEach(b => b.onclick = () => {
       st.stack = { auto: null, side: false, stack: true }[b.dataset.layout]; save(); applyLayout();
       s.querySelectorAll('[data-layout]').forEach(x => x.classList.toggle('on', x === b));
     });
+    s.querySelector('#sSwap').onclick = () => { st.swapped = !st.swapped; save(); applyLayout(); };
+    s.querySelector('#sBackup').onclick = backupSheet;
     s.querySelector('#sResetLayout').onclick = () => { Object.assign(st, { ratio: DEF.ratio, swapped: false, stack: null, mode: 'split' }); save(); applyLayout(); closeSheet(); };
     s.querySelector('#sRestoreApps').onclick = () => {
       const missing = DEFAULT_APPS.filter(d => !st.apps.some(a => a.id === d.id));
@@ -1169,6 +1343,7 @@ renderApps();
 setTimeout(resolveMissingLogos, 4000);
 setVoiceIcon();
 optsBadge();
+renderQuick();
 tickClock();
 wake();
 startGeo();
