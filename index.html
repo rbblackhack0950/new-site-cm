@@ -141,6 +141,22 @@
 </div>
 <div id="toast" role="status" hidden></div>
 
+<script>
+// ES5 on purpose: if this browser engine is too old to run app.js (e.g. an unupdated car head unit),
+// show why instead of a blank screen.
+setTimeout(function () {
+  if (window.__car) return;
+  var m = navigator.userAgent.match(/Chrome\/(\d+)/), v = m ? m[1] : 'ไม่ทราบ';
+  var d = document.createElement('div');
+  d.id = 'bootFail';
+  d.setAttribute('style', 'position:fixed;inset:0;top:0;left:0;right:0;bottom:0;z-index:9999;background:#0c0d10;color:#eef0f3;font:18px/1.5 sans-serif;padding:32px');
+  d.innerHTML = '<h2 style="margin:0 0 12px">Car Screen เปิดไม่ขึ้นบนเครื่องนี้</h2>' +
+    '<p>ตัวแสดงเว็บของเครื่อง (Chrome/WebView) เวอร์ชัน <b>' + v + '</b> อาจเก่าเกินไป ต้องเป็นเวอร์ชัน 85 ขึ้นไป</p>' +
+    '<p>ลองอัปเดต “Android System WebView” หรือ Chrome แล้วเปิดใหม่ ถ้ายังไม่ได้ ถ่ายภาพหน้าจอนี้ส่งให้ผู้พัฒนา</p>' +
+    '<p style="color:#9aa1ac;font-size:13px;word-break:break-all">' + navigator.userAgent + '</p>';
+  document.body.appendChild(d);
+}, 6000);
+</script>
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
 </body>

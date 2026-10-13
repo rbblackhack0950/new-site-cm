@@ -1,5 +1,5 @@
 // App shell cache. Map tiles, routing and video always come from the network.
-const CACHE = 'carscreen-v12';
+const CACHE = 'carscreen-v13';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/192.png', 'icons/512.png', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => e.waitUntil(

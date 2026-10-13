@@ -171,6 +171,7 @@ console.log('Units');
     assert.equal(r.s1, '300 เมตร'); assert.equal(r.s2, '1.5 กิโลเมตร');
   });
   await test('no console errors on load', () => assert.deepEqual(errors, []));
+  await test('startup check stays hidden when the app runs', async () => { await page.waitForTimeout(6500); assert.equal(await page.locator('#bootFail').count(), 0); });
   await ctx.close();
 }
 
@@ -548,6 +549,21 @@ console.log('Apps');
     assert.ok(await page.evaluate(() => __car.st.extSeen.includes('netflix')), 'settings kept');
   });
   await test('no console errors in apps', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
+// ---------- engine too old to run app.js ----------
+console.log('Old browser engine');
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await ctx.route(/app\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
+  await ctx.route(/^https?:\/\/(?!localhost)/, r => r.fulfill({ status: 404, body: '' }));
+  const page = await ctx.newPage();
+  await page.goto(BASE);
+  await test('a startup failure shows the WebView version instead of a blank screen', async () => {
+    await page.waitForSelector('#bootFail', { timeout: 9000 });
+    assert.match(await page.textContent('#bootFail'), /เวอร์ชัน \d+/);
+  });
   await ctx.close();
 }
 
