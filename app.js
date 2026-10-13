@@ -799,7 +799,7 @@ function renderTiles() {
     <button class="tile" data-tile="${i}" ${a.customIdx != null ? `data-custom="${a.customIdx}"` : ''}>
       <div class="face" style="background:${a.color}">${a.icon ? svg(a.icon) : esc(a.letter)}</div>
       <span>${esc(a.name)}</span>
-      ${a.ext ? `<i class="ext">${svg('open')}</i>` : ''}
+      ${a.ext && (!native || a.id === 'gmaps') ? `<i class="ext">${svg('open')}</i>` : ''}
     </button>`).join('') + `
     <button class="tile" id="addTile"><div class="face" style="background:transparent;border:2px dashed rgba(255,255,255,.2)">${svg('add')}</div><span>เพิ่ม</span></button>`;
   $('#tiles')._all = all;

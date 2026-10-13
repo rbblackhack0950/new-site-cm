@@ -614,6 +614,10 @@ console.log('Android app');
     };
   });
   const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
+  await test('in the app, only Google Maps is marked as opening outside', async () => {
+    assert.equal(await page.locator('.tile:has-text("Netflix") .ext').count(), 0);
+    assert.equal(await page.locator('.tile:has-text("Google Maps") .ext').count(), 1);
+  });
   await test('YouTube tile opens the real m.youtube.com in the pane', async () => {
     await page.click('.tile:has-text("YouTube")');
     assert.deepEqual(await last('load'), ['load', 'https://m.youtube.com']);

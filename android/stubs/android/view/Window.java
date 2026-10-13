@@ -4,4 +4,6 @@ public abstract class Window {
   public void addFlags(int flags) { throw new RuntimeException("Stub!"); }
   public WindowInsetsController getInsetsController() { throw new RuntimeException("Stub!"); }
   public abstract View getDecorView();
+  public WindowManager.LayoutParams getAttributes() { throw new RuntimeException("Stub!"); }
+  public void setAttributes(WindowManager.LayoutParams a) { throw new RuntimeException("Stub!"); }
 }
