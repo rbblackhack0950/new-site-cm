@@ -579,7 +579,9 @@ console.log('Android app');
       back: () => __native.push(['back']), stop: () => __native.push(['stop']),
       external: u => __native.push(['external', u]),
       mapsAdjacent: u => __native.push(['maps', u]),
-      inSplitScreen: () => false
+      inSplitScreen: () => false,
+      appVersion: () => 1,
+      update: (u, h) => __native.push(['update', u, h])
     };
   });
   const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
@@ -642,6 +644,20 @@ console.log('Android app');
     await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(5, 400);
     await page.click('.tile:has-text("Google Maps")');
     assert.deepEqual(await last('maps'), ['maps', 'https://www.google.com/maps']);
+  });
+  await test('app update: newer APK offered, downloaded with its checksum, progress shown', async () => {
+    const v = JSON.parse(await (await page.request.get(BASE + 'dist/version.json')).text());
+    assert.ok(v.versionCode > 1 && /^[0-9a-f]{64}$/.test(v.sha256), 'version.json published with checksum');
+    assert.ok(await page.locator('#dockToggle.badge').count(), 'menu handle shows a dot');
+    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    assert.match(await page.textContent('#appUpd'), new RegExp('มีเวอร์ชันใหม่ ' + v.versionName.replace(/\./g, '\\.')));
+    await page.click('#updGo');
+    assert.deepEqual(await last('update'), ['update', BASE + 'dist/car-screen.apk', v.sha256]);
+    await page.evaluate(() => __appUpdate('confirm', 'กด “ติดตั้ง” เพื่อยืนยันการอัปเดต'));
+    assert.match(await page.textContent('#appUpd'), /ยืนยันการอัปเดต/);
+    await page.evaluate(() => __appUpdate('error', 'ดาวน์โหลดไม่สำเร็จ (HTTP 500)'));
+    assert.match(await page.textContent('#toast'), /ติดตั้งเองได้จาก .*car-screen\.apk/);
+    await page.mouse.click(5, 5);
   });
   await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
   await ctx.close();

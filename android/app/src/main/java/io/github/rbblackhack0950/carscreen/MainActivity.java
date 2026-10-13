@@ -27,6 +27,17 @@ import android.widget.FrameLayout;
 
 import org.json.JSONObject;
 
+import android.app.PendingIntent;
+import android.content.pm.PackageInstaller;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.MessageDigest;
+
 /**
  * Car Screen for Android.
  *
@@ -43,6 +54,7 @@ public class MainActivity extends Activity {
     static final int REQ_LOCATION = 1;
     static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     static final String MAPS_PACKAGE = "com.google.android.apps.maps";
+    static final String ACTION_INSTALL_STATUS = "io.github.rbblackhack0950.carscreen.INSTALL_STATUS";
 
     private WebView app;
     private WebView pane;
@@ -277,6 +289,99 @@ public class MainActivity extends Activity {
         public boolean inSplitScreen() {
             return isInMultiWindowMode();
         }
+
+        /** Installed app version, compared by the web app with dist/version.json */
+        @JavascriptInterface
+        public int appVersion() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        /** Download a new APK, check its SHA-256 and hand it to Android's installer */
+        @JavascriptInterface
+        public void update(final String url, final String sha256) {
+            new Thread(new Runnable() {
+                public void run() { installUpdate(url, sha256); }
+            }).start();
+        }
+    }
+
+    // ---------------------------------------------------------------- self update
+
+    private void installUpdate(String url, String sha256) {
+        PackageInstaller.Session session = null;
+        try {
+            updateStatus("download", "กำลังดาวน์โหลดแอปเวอร์ชันใหม่…");
+            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(60000);
+            c.setUseCaches(false);
+            if (c.getResponseCode() != 200) throw new IOException("ดาวน์โหลดไม่สำเร็จ (HTTP " + c.getResponseCode() + ")");
+            byte[] apk = readAll(c.getInputStream());
+            if (sha256 != null && sha256.length() > 0 && !sha256.equalsIgnoreCase(hex(MessageDigest.getInstance("SHA-256").digest(apk)))) {
+                throw new IOException("ไฟล์ที่ดาวน์โหลดไม่ตรงกับที่ประกาศไว้ ลองใหม่อีกครั้ง");
+            }
+            updateStatus("install", "กำลังติดตั้ง…");
+            PackageInstaller installer = getPackageManager().getPackageInstaller();
+            int id = installer.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL));
+            session = installer.openSession(id);
+            OutputStream out = session.openWrite("car-screen.apk", 0, apk.length);
+            out.write(apk);
+            session.fsync(out);
+            out.close();
+            Intent result = new Intent(this, MainActivity.class).setAction(ACTION_INSTALL_STATUS);
+            PendingIntent pending = PendingIntent.getActivity(this, 1, result,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            session.commit(pending.getIntentSender());
+            session.close();
+        } catch (Exception e) {
+            if (session != null) session.abandon();
+            updateStatus("error", e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (!ACTION_INSTALL_STATUS.equals(intent.getAction())) return;
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, 1);
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            // Android asks the user to confirm (and, the first time, to allow installs from this app)
+            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirm != null) startActivity(confirm);
+            updateStatus("confirm", "กด “ติดตั้ง” เพื่อยืนยันการอัปเดต");
+        } else if (status == PackageInstaller.STATUS_SUCCESS) {
+            updateStatus("done", "อัปเดตแล้ว");
+        } else {
+            String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            updateStatus("error", "ติดตั้งไม่สำเร็จ" + (msg != null ? " (" + msg + ")" : ""));
+        }
+    }
+
+    private void updateStatus(final String state, final String message) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                app.evaluateJavascript("window.__appUpdate && window.__appUpdate("
+                        + JSONObject.quote(state) + "," + JSONObject.quote(message) + ")", null);
+            }
+        });
+    }
+
+    private static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        byte[] chunk = new byte[16384];
+        for (int n; (n = in.read(chunk)) != -1; ) buf.write(chunk, 0, n);
+        in.close();
+        return buf.toByteArray();
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 
     private void launchMapsAdjacent(String uri) {

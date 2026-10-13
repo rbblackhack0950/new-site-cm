@@ -117,4 +117,14 @@ const { signedApk } = await signer.sign(new Uint8Array(readFileSync(inApk)));
 writeFileSync(outApk, signedApk);
 JS
 node "$W/sign.mjs" "$TOOLS/signer" "$W/unsigned.apk" "$W/key.pem" "$W/cert.pem" "$OUT/car-screen.apk"
+# what the app compares against to offer an update
+cat > "$OUT/version.json" <<JSON
+{
+  "versionCode": $VC,
+  "versionName": "1.0.$VC",
+  "url": "dist/car-screen.apk",
+  "size": $(wc -c < "$OUT/car-screen.apk"),
+  "sha256": "$(sha256sum "$OUT/car-screen.apk" | cut -d' ' -f1)"
+}
+JSON
 echo "built $OUT/car-screen.apk (versionCode $VC, $(wc -c < "$OUT/car-screen.apk") bytes)"

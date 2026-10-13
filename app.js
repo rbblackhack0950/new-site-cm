@@ -662,6 +662,48 @@ function syncPane() {
 window.__paneUrl = url => { if (!url || url === 'about:blank') return; paneUrl = url; $('#webQ').value = url; $('#webFrame').dataset.url = url; };
 if (native) { body.classList.add('native'); setInterval(syncPane, 120); }
 
+// ---------- Android app updates: compare the installed APK with dist/version.json ----------
+// (the screens and features load from the web, so they update by themselves; this is for the APK shell)
+const appUpd = { have: 0, latest: null, state: '' };
+async function checkAppUpdate(manual) {
+  if (!native?.appVersion) return;
+  try {
+    appUpd.have = native.appVersion();
+    appUpd.latest = await getJSON('dist/version.json?t=' + Date.now(), 10000, { cache: 'no-store' });
+    const newer = appUpd.latest.versionCode > appUpd.have;
+    $('#dockToggle').classList.toggle('badge', newer);
+    if (newer && (manual || store.get('carscreen.updSeen', 0) !== appUpd.latest.versionCode)) {
+      store.set('carscreen.updSeen', appUpd.latest.versionCode);
+      toast(`มีแอปเวอร์ชันใหม่ ${appUpd.latest.versionName} อัปเดตได้ที่ เมนู ⋯ → ตั้งค่า`, 6000);
+    } else if (manual) toast('แอปเป็นเวอร์ชันล่าสุดแล้ว', 2500);
+  } catch { if (manual) toast('ตรวจหาอัปเดตไม่ได้ ตรวจสอบอินเทอร์เน็ต'); }
+  if (!$('#sheetWrap').hidden && $('#appUpd')) $('#appUpd').outerHTML = appUpdHtml();
+}
+function appUpdHtml() {
+  const l = appUpd.latest, newer = l && l.versionCode > appUpd.have;
+  return `<div id="appUpd" class="upd">
+    <div class="sub">แอป Android เวอร์ชัน 1.0.${appUpd.have || '?'}${newer ? ` · มีเวอร์ชันใหม่ <b>${esc(l.versionName)}</b>` : l ? ' · ล่าสุดแล้ว' : ''}</div>
+    ${appUpd.state ? `<div class="sub">${esc(appUpd.state)}</div>` : ''}
+    <div class="row">${newer ? '<button class="btn primary" id="updGo"><span class="ic" data-i="dl"></span>อัปเดตแอป</button>' : '<button class="btn" id="updCheck">ตรวจหาอัปเดต</button>'}</div>
+  </div>`;
+}
+// progress reported by the app: download → install → confirm → done / error
+window.__appUpdate = (state, msg) => {
+  appUpd.state = msg;
+  if (state === 'error') toast(msg + ' · ติดตั้งเองได้จาก ' + new URL('dist/car-screen.apk', location.href).href, 9000);
+  else toast(msg, state === 'confirm' ? 6000 : 3500);
+  if ($('#appUpd')) { $('#appUpd').outerHTML = appUpdHtml(); paintIcons($('#sheet')); }
+};
+document.addEventListener('click', e => {
+  if (e.target.closest('#updCheck')) checkAppUpdate(true);
+  if (e.target.closest('#updGo') && appUpd.latest) {
+    const l = appUpd.latest;
+    native.update(new URL(l.url, location.href).href, l.sha256 || '');
+    appUpd.state = 'กำลังเริ่ม…'; $('#appUpd').outerHTML = appUpdHtml();
+  }
+});
+if (native?.appVersion) { setTimeout(() => checkAppUpdate(false), 3000); setInterval(() => checkAppUpdate(false), 6 * 3600e3); }
+
 function openExternal(url) {
   if (native) return native.external(url);
   const a = Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener' });
@@ -1168,6 +1210,7 @@ function settingsSheet() {
     <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
     <label>YouTube API key (ไม่บังคับ ช่วยให้ค้นหาเสถียร)<input type="password" id="sKey" value="${esc(st.ytKey)}" placeholder="AIza…" autocapitalize="off" autocomplete="off"></label>
     <div class="sub">สร้างฟรีที่ Google Cloud Console → เปิด “YouTube Data API v3” → Credentials → API key</div>
+    ${native?.appVersion ? appUpdHtml() : ''}
     ${native ? '' : `<div class="sub"><b>แอป Android:</b> เปิดได้ทุกเว็บในฝั่งแอป รวมถึง m.youtube.com, Netflix, Facebook</div>
     <a class="btn" id="sApk" href="dist/car-screen.apk" download="car-screen.apk"><span class="ic" data-i="dl"></span>ดาวน์โหลดแอป Android (APK)</a>`}
     <div class="sub">แอปที่ติดตั้งเปิดไม่ขึ้นหรือไม่อัปเดต: กด “ซ่อมแอป” เพื่อล้างแคชแล้วโหลดใหม่ (การตั้งค่าและประวัติยังอยู่)</div>

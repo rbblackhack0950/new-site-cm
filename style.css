@@ -82,6 +82,9 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .chip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:11px;font-size:12px;background:var(--glass-hi);color:var(--mute);white-space:nowrap}
 .chip.warn{background:rgba(245,166,35,.16);color:#f5b544}
 .chip.ok{background:rgba(48,164,108,.16);color:#4cc38a}
+#dockToggle.badge::after{content:"";position:absolute;top:3px;right:3px;width:9px;height:9px;border-radius:50%;background:var(--danger)}
+.upd{display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.upd .row{justify-content:flex-start}
 #rcOpts.on{color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}
 #navBanner{position:absolute;z-index:600;top:12px;left:12px;right:12px;max-width:460px;border-radius:var(--r);overflow:hidden;background:var(--nav);box-shadow:0 8px 28px rgba(0,0,0,.45)}
 .nb-main{display:flex;gap:14px;align-items:center;padding:14px 16px}

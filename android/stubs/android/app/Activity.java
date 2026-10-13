@@ -9,6 +9,7 @@ public class Activity extends android.content.Context {
   public final void requestPermissions(String[] permissions, int requestCode) { throw new RuntimeException("Stub!"); }
   public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) { throw new RuntimeException("Stub!"); }
   public void onWindowFocusChanged(boolean hasFocus) { throw new RuntimeException("Stub!"); }
+  protected void onNewIntent(android.content.Intent intent) { throw new RuntimeException("Stub!"); }
   public void onBackPressed() { throw new RuntimeException("Stub!"); }
   public boolean isInMultiWindowMode() { throw new RuntimeException("Stub!"); }
 }
