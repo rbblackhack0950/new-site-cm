@@ -585,18 +585,60 @@ console.log('Apps');
 }
 
 // ---------- engine too old to run app.js ----------
-console.log('Old browser engine');
+console.log('Startup problems');
 {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-  await ctx.route(/app\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
-  await ctx.route(/^https?:\/\/(?!localhost)/, r => r.fulfill({ status: 404, body: '' }));
-  const page = await ctx.newPage();
-  await page.goto(BASE);
-  await test('a startup failure shows the WebView version instead of a blank screen', async () => {
-    await page.waitForSelector('#bootFail', { timeout: 9000 });
-    assert.match(await page.textContent('#bootFail'), /เวอร์ชัน \d+/);
-  });
-  await ctx.close();
+  const open = async (opts, appJs) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...opts });
+    if (appJs) await ctx.route(/app\.js$/, appJs);
+    await ctx.route(/^https?:\/\/(?!localhost)/, r => r.fulfill({ status: 404, body: '' }));
+    const page = await ctx.newPage(); await page.goto(BASE);
+    return { ctx, page };
+  };
+  {
+    const { ctx, page } = await open({}, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
+    await test('a start-up error on a modern engine shows the real error, not "too old"', async () => {
+      await page.waitForSelector('#bootFail', { timeout: 5000 });
+      const t = await page.textContent('#bootFail');
+      assert.match(t, /เกิดข้อผิดพลาดตอนเปิดแอป/);
+      assert.doesNotMatch(t, /เก่าเกินไป/);
+      assert.match(t, /ข้อผิดพลาด: .*app\.js:1/);
+      assert.ok(await vis(page, '#bootRetry') && await vis(page, '#bootRepair'));
+    });
+    await ctx.close();
+  }
+  {
+    const ua = 'Mozilla/5.0 (Linux; Android 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Mobile Safari/537.36';
+    const { ctx, page } = await open({ userAgent: ua }, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
+    await test('an engine older than Chrome 85 is named as the cause', async () => {
+      await page.waitForSelector('#bootFail', { timeout: 5000 });
+      assert.match(await page.textContent('#bootFail'), /เวอร์ชัน 69 เก่าเกินไป/);
+    });
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open({}, async r => { await new Promise(res => setTimeout(res, 8000)); await r.continue(); });
+    await test('a slow connection is not reported as a failure', async () => {
+      await page.waitForTimeout(7000);
+      assert.equal(await page.locator('#bootFail').count(), 0, 'no notice while still loading');
+      await page.waitForFunction(() => window.__car, null, { timeout: 10000 });
+      assert.equal(await page.locator('#bootFail').count(), 0);
+    });
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open({});
+    await test('second launch starts from stored files, even offline', async () => {
+      await page.waitForFunction(() => window.__car);
+      await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+      await page.waitForFunction(() => navigator.serviceWorker.controller || (location.reload(), false), null, { timeout: 8000 }).catch(() => {});
+      await page.waitForFunction(() => window.__car && navigator.serviceWorker.controller, null, { timeout: 8000 });
+      await ctx.setOffline(true);
+      await page.reload();
+      await page.waitForFunction(() => window.__car, null, { timeout: 5000 });
+      await ctx.setOffline(false);
+    });
+    await ctx.close();
+  }
 }
 
 // ---------- Android app bridge (native side faked) ----------

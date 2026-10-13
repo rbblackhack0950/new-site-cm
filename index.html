@@ -149,20 +149,47 @@
 <div id="toast" role="status" hidden></div>
 
 <script>
-// ES5 on purpose: if this browser engine is too old to run app.js (e.g. an unupdated car head unit),
-// show why instead of a blank screen.
-setTimeout(function () {
-  if (window.__car) return;
-  var m = navigator.userAgent.match(/Chrome\/(\d+)/), v = m ? m[1] : 'ไม่ทราบ';
-  var d = document.createElement('div');
-  d.id = 'bootFail';
-  d.setAttribute('style', 'position:fixed;inset:0;top:0;left:0;right:0;bottom:0;z-index:9999;background:#0c0d10;color:#eef0f3;font:18px/1.5 sans-serif;padding:32px');
-  d.innerHTML = '<h2 style="margin:0 0 12px">Car Screen เปิดไม่ขึ้นบนเครื่องนี้</h2>' +
-    '<p>ตัวแสดงเว็บของเครื่อง (Chrome/WebView) เวอร์ชัน <b>' + v + '</b> อาจเก่าเกินไป ต้องเป็นเวอร์ชัน 85 ขึ้นไป</p>' +
-    '<p>ลองอัปเดต “Android System WebView” หรือ Chrome แล้วเปิดใหม่ ถ้ายังไม่ได้ ถ่ายภาพหน้าจอนี้ส่งให้ผู้พัฒนา</p>' +
-    '<p style="color:#9aa1ac;font-size:13px;word-break:break-all">' + navigator.userAgent + '</p>';
-  document.body.appendChild(d);
-}, 6000);
+// ES5 on purpose, so it runs on any engine. If app.js fails to start, explain what happened instead of
+// leaving a blank screen: the real error when there is one, "too old" only when the engine really is,
+// and "slow" when nothing has failed yet. The notice removes itself if the app starts after all.
+(function () {
+  var errs = window.__bootErrs = [], t0 = Date.now(), shown = null;
+  addEventListener('error', function (e) {
+    var el = e.target;
+    if (el && el !== window && (el.src || el.href)) errs.push('โหลดไฟล์ไม่สำเร็จ: ' + (el.src || el.href).split('/').pop());
+    else errs.push((e.message || 'error') + (e.filename ? ' (' + e.filename.split('/').pop().split('?')[0] + ':' + e.lineno + ')' : ''));
+  }, true);
+  function repair() {
+    if (navigator.serviceWorker) navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+    if (window.caches) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+    setTimeout(function () { location.reload(); }, 800);
+  }
+  function show() {
+    var m = navigator.userAgent.match(/Chrome\/(\d+)/), v = m ? +m[1] : 0, old = v && v < 85;
+    var d = document.createElement('div');
+    d.id = 'bootFail';
+    d.setAttribute('style', 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;overflow:auto;background:#0c0d10;color:#eef0f3;font:18px/1.5 sans-serif;padding:32px');
+    var btn = 'style="font:inherit;font-weight:600;color:#eef0f3;background:#262930;border:0;border-radius:24px;padding:12px 22px;margin:0 8px 8px 0"';
+    d.innerHTML = '<h2 style="margin:0 0 12px">Car Screen เปิดไม่ขึ้น</h2>' +
+      (old ? '<p>ตัวแสดงเว็บของเครื่อง (Chrome/WebView) เวอร์ชัน <b>' + v + '</b> เก่าเกินไป ต้องเป็นเวอร์ชัน 85 ขึ้นไป ลองอัปเดต “Android System WebView” หรือ Chrome</p>'
+        : errs.length ? '<p>เกิดข้อผิดพลาดตอนเปิดแอป ลองกด “ลองใหม่” หรือ “ซ่อมแอป”</p>'
+        : '<p>แอปใช้เวลาโหลดนานผิดปกติ อินเทอร์เน็ตอาจช้าหรือหลุด ลองกด “ลองใหม่”</p>') +
+      '<p><button ' + btn + ' id="bootRetry">ลองใหม่</button><button ' + btn + ' id="bootRepair">ซ่อมแอป</button></p>' +
+      '<p>ถ้ายังไม่ได้ ถ่ายภาพหน้าจอนี้ส่งให้ผู้พัฒนา</p>' +
+      '<p style="color:#9aa1ac;font-size:13px;word-break:break-all">' + (errs.length ? 'ข้อผิดพลาด: ' + errs.slice(0, 3).join(' | ').replace(/</g, '&lt;') + '<br>' : '') +
+      'WebView ' + (v || '?') + ' · ' + navigator.userAgent.replace(/</g, '&lt;') + '</p>';
+    document.body.appendChild(d);
+    document.getElementById('bootRetry').onclick = function () { location.reload(); };
+    document.getElementById('bootRepair').onclick = repair;
+    return d;
+  }
+  var timer = setInterval(function () {
+    var age = Date.now() - t0;
+    if (window.__car) { if (shown) shown.parentNode.removeChild(shown); clearInterval(timer); return; }
+    if (!shown && ((errs.length && age > 2500) || age > 25000)) shown = show();
+    if (age > 120000) clearInterval(timer);
+  }, 500);
+})();
 </script>
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
