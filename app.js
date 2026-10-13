@@ -141,5 +141,18 @@
   $('#urlForm').onsubmit = e => { e.preventDefault(); openUrl($('#urlQ').value); };
   $('#popout').onclick = () => current && pop(current);
 
+  // ---------- Install (PWA) ----------
+  const inst = $('#install');
+  let promptEv = null;
+  const standalone = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone;
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); promptEv = e; inst.hidden = false; });
+  addEventListener('appinstalled', () => { inst.hidden = true; promptEv = null; });
+  if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) inst.hidden = false;
+  inst.onclick = async () => {
+    if (promptEv) { promptEv.prompt(); await promptEv.userChoice; promptEv = null; inst.hidden = true; }
+    else say('iPhone/iPad: กดปุ่มแชร์ (⬆) ใน Safari แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”');
+  };
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+
   applyLayout(); renderDock(); openApp(BUILTIN[0]);
 })();
