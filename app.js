@@ -1,158 +1,847 @@
+/* Car Screen — split screen map navigation + media, for phones and tablets. */
 (() => {
-  const $ = s => document.querySelector(s);
-  const app = $('#app'), root = document.documentElement;
-  const store = {
-    get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
-  };
-  const st = Object.assign({ ratio: 50, swapped: false, stack: null, custom: [] }, store.get('cs', {}));
-  const save = () => store.set('cs', st);
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const app = $('#app'), root = document.documentElement, body = document.body;
 
-  // ---------- Layout ----------
-  const autoStack = () => st.stack ?? (innerHeight > innerWidth);
-  function applyLayout() {
-    app.classList.toggle('stack', autoStack());
-    app.classList.toggle('swapped', st.swapped);
+// ===================================================================
+// Storage & settings
+// ===================================================================
+const store = {
+  get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', custom: [], recentDest: [], ytHistory: [], lastView: 'home' };
+const st = Object.assign({}, DEF, store.get('carscreen', {}));
+const save = () => store.set('carscreen', st);
+
+// ===================================================================
+// Icons (Material Symbols paths, Apache 2.0)
+// ===================================================================
+const P = {
+  search: 'M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14',
+  close: 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+  loc: 'M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4m8.94 3A8.99 8.99 0 0 0 13 3.06V1h-2v2.06A8.99 8.99 0 0 0 3.06 11H1v2h2.06A8.99 8.99 0 0 0 11 20.94V23h2v-2.06A8.99 8.99 0 0 0 20.94 13H23v-2zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7',
+  nav: 'M12 2 4.5 20.29l.71.71L12 18l6.79 3 .71-.71z',
+  open: 'M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z',
+  vol: 'M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77',
+  mute: 'M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63m2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71M4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a9 9 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9zM12 4 9.91 6.09 12 8.18z',
+  apps: 'M4 8h4V4H4zm6 12h4v-4h-4zm-6 0h4v-4H4zm0-6h4v-4H4zm6 0h4v-4h-4zm6-10v4h4V4zm-6 4h4V4h-4zm6 6h4v-4h-4zm0 6h4v-4h-4z',
+  globe: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39',
+  list: 'M3 13h2v-2H3zm0 4h2v-2H3zm0-8h2V7H3zm4 4h14v-2H7zm0 4h14v-2H7zM7 7v2h14V7z',
+  map: 'm20.5 3-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5M15 19l-6-2.11V5l6 2.11z',
+  split: 'M3 5v14h18V5zm8 12H5V7h6zm8 0h-6V7h6z',
+  stack: 'M3 3v18h18V3zm16 16H5v-6h14zm0-8H5V5h14z',
+  play: 'M8 5v14l11-7z',
+  swap: 'M6.99 11 3 15l3.99 4v-3H14v-2H6.99zM21 9l-3.99-4v3H10v2h7.01v3z',
+  fs: 'M7 14H5v5h5v-2H7zm-2-4h2V7h3V5H5zm12 7h-3v2h5v-5h-2zM14 5v2h3v3h2V5z',
+  fsx: 'M5 16h3v3h2v-5H5zm3-8H5v2h5V5H8zm6 11h2v-3h3v-2h-5zm2-11V5h-2v5h5V8z',
+  dl: 'M19 9h-4V3H9v6H5l7 7zM5 18v2h14v-2z',
+  tune: 'M3 17v2h6v-2zM3 5v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z',
+  more: 'M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2m12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2m-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2',
+  add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z',
+  place: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7m0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5',
+  history: 'M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.95 8.95 0 0 0 13 21a9 9 0 0 0 0-18m-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z',
+  // maneuver arrows
+  up: 'M11 21V7.83l-4.59 4.58L5 11l7-7 7 7-1.41 1.41L13 7.83V21z',
+  right: 'M14 4l5 5-5 5v-4h-4a2 2 0 0 0-2 2v8H6v-8a4 4 0 0 1 4-4h4z',
+  slight: 'M13.5 4H20v6.5l-2.4-2.4-4.9 4.9c-.45.45-.7 1.06-.7 1.7V21h-2v-6.3c0-1.17.46-2.3 1.29-3.12l4.9-4.9z',
+  uturn: 'M17 13l-4 4h3v4h2v-4h3zM16 13V9a5 5 0 0 0-10 0v12h2V9a3 3 0 0 1 6 0v4z',
+  round: 'M12 6a6 6 0 1 0 6 6h-2a4 4 0 1 1-4-4v3l4-4-4-4z',
+  flag: 'M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6z',
+  pin: 'M15 1C8.92 1 4 5.92 4 12c0 8.25 11 27 11 27s11-18.75 11-27C26 5.92 21.08 1 15 1m0 15.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9'
+};
+const svg = (n, extra = '') => `<svg viewBox="0 0 ${n === 'pin' ? '30 40' : '24 24'}" aria-hidden="true"${extra}><path d="${P[n]}"/></svg>`;
+const paintIcons = (scope = document) => scope.querySelectorAll('[data-i]').forEach(el => {
+  if (!el.dataset.painted) { el.insertAdjacentHTML('afterbegin', svg(el.dataset.i)); el.dataset.painted = 1; }
+});
+const setIcon = (el, n) => { el.dataset.i = n; el.innerHTML = svg(n); };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ===================================================================
+// Toast, sheet, idle auto-hide, wake lock
+// ===================================================================
+let toastT;
+function toast(msg, ms = 3500) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms);
+}
+function openSheet(html, bind) {
+  const s = $('#sheet'); s.innerHTML = html; paintIcons(s);
+  $('#sheetWrap').hidden = false; bind?.(s);
+  s.querySelector('[data-close]')?.addEventListener('click', closeSheet);
+}
+const closeSheet = () => { $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; };
+$('#sheetWrap').addEventListener('click', e => { if (e.target.id === 'sheetWrap') closeSheet(); });
+
+let idleT;
+function wake() {
+  body.classList.remove('idle'); clearTimeout(idleT);
+  idleT = setTimeout(() => {
+    const busy = document.activeElement?.matches('input') || !$('#results').hidden || !$('#sheetWrap').hidden;
+    if (busy) return wake();
+    body.classList.add('idle');
+    $('#dockBar').hidden = true;
+  }, 4500);
+}
+['pointerdown', 'keydown', 'wheel'].forEach(ev => addEventListener(ev, wake, { passive: true, capture: true }));
+$$('.reveal').forEach(r => r.addEventListener('pointerdown', wake));
+
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); }
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}
+const wantAwake = () => nav.active || yt.playing;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wantAwake()) keepAwake(true); });
+
+// ===================================================================
+// Layout: split / map / media, swap, orientation, divider
+// ===================================================================
+const isStack = () => st.stack ?? (innerHeight > innerWidth);
+function applyLayout() {
+  app.classList.toggle('stack', isStack());
+  app.classList.toggle('swapped', st.swapped);
+  ['map', 'split', 'media'].forEach(m => app.classList.toggle('mode-' + m, st.mode === m));
+  $$('.seg button').forEach(b => b.classList.toggle('on', b.dataset.mode === st.mode));
+  setIcon($('#orient'), isStack() ? 'split' : 'stack');
+  root.style.setProperty('--ratio', st.ratio);
+  placeDock();
+  map && setTimeout(() => map.invalidateSize(), 60);
+}
+// the menu handle sits on the divider in split mode, bottom-centre otherwise
+function placeDock() {
+  const d = $('#dock'), split = st.mode === 'split';
+  d.classList.toggle('on-divider', split); d.classList.toggle('vertical', split && !isStack());
+  // at the far end of the divider so it never covers the drag grip in the middle
+  if (split) {
+    const r = div.getBoundingClientRect(), v = !isStack();
+    d.style.left = (v ? r.left + r.width / 2 : r.right - 44) + 'px';
+    d.style.top = (v ? r.bottom - 44 : r.top + r.height / 2) + 'px';
+  }
+  else { d.style.left = '50%'; d.style.top = ''; }
+}
+addEventListener('resize', applyLayout);
+$$('.seg button').forEach(b => b.onclick = () => { st.mode = b.dataset.mode; save(); applyLayout(); });
+$('#swap').onclick = () => { st.swapped = !st.swapped; save(); applyLayout(); };
+$('#orient').onclick = () => { st.stack = !isStack(); save(); applyLayout(); };
+$('#dockToggle').onclick = () => {
+  const bar = $('#dockBar'); bar.hidden = !bar.hidden;
+  if (bar.hidden) return;
+  // keep the menu fully on screen wherever the handle sits
+  bar.style.setProperty('--shift', '0px');
+  const r = bar.getBoundingClientRect(), pad = 8;
+  const dx = r.left < pad ? pad - r.left : r.right > innerWidth - pad ? innerWidth - pad - r.right : 0;
+  bar.style.setProperty('--shift', dx + 'px');
+};
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#dock')) $('#dockBar').hidden = true; });
+
+const div = $('#divider');
+div.addEventListener('pointerdown', e => {
+  e.preventDefault(); div.setPointerCapture(e.pointerId);
+  app.classList.add('drag'); div.classList.add('drag');
+  const move = ev => {
+    const r = app.getBoundingClientRect();
+    let p = isStack() ? (ev.clientY - r.top) / r.height : (ev.clientX - r.left) / r.width;
+    if (st.swapped) p = 1 - p;
+    st.ratio = Math.round(Math.min(80, Math.max(20, p * 100)));
     root.style.setProperty('--ratio', st.ratio);
-    $('#ratio').textContent = st.ratio + '/' + (100 - st.ratio);
-  }
-  addEventListener('resize', applyLayout);
-  $('#swap').onclick = () => { st.swapped = !st.swapped; save(); applyLayout(); };
-  $('#layout').onclick = () => { st.stack = !autoStack(); save(); applyLayout(); };
-  $('#ratio').onclick = () => { const r = [50, 66, 33]; st.ratio = r[(r.indexOf(st.ratio) + 1) % r.length]; save(); applyLayout(); };
-  document.querySelectorAll('[data-max]').forEach(b => b.onclick = () => {
-    const c = 'max-' + b.dataset.max, on = !app.classList.contains(c);
-    app.classList.remove('max-paneA', 'max-paneB');
-    if (on) app.classList.add(c);
-  });
-  $('#fs').onclick = () => {
-    const d = document;
-    if (d.fullscreenElement) d.exitFullscreen();
-    else (root.requestFullscreen || root.webkitRequestFullscreen)?.call(root);
+    placeDock();
   };
-  document.addEventListener('fullscreenchange', () => document.body.classList.toggle('fsmode', !!document.fullscreenElement));
-
-  // drag divider
-  const div = $('#divider');
-  div.addEventListener('pointerdown', e => {
-    div.setPointerCapture(e.pointerId);
-    const move = ev => {
-      const r = app.getBoundingClientRect(), v = autoStack();
-      let p = v ? (ev.clientY - r.top) / r.height : (ev.clientX - r.left) / r.width;
-      if (st.swapped) p = 1 - p;
-      st.ratio = Math.round(Math.min(80, Math.max(20, p * 100)));
-      applyLayout();
-    };
-    const up = () => { div.removeEventListener('pointermove', move); div.removeEventListener('pointerup', up); save(); fix(false); };
-    fix(true);
-    div.addEventListener('pointermove', move); div.addEventListener('pointerup', up);
-  });
-  const fix = off => document.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = off ? 'none' : '');
-
-  // ---------- Map ----------
-  const mapFrame = $('#mapFrame');
-  const mapUrl = p => 'https://maps.google.com/maps?output=embed&hl=th&' + new URLSearchParams(p);
-  let here = null;
-  const showMap = p => mapFrame.src = mapUrl(p);
-  function locate(cb) {
-    navigator.geolocation?.getCurrentPosition(
-      pos => { here = `${pos.coords.latitude},${pos.coords.longitude}`; cb?.(here); },
-      () => alert('ไม่สามารถอ่านตำแหน่งได้ (ต้องเปิด HTTPS และอนุญาตตำแหน่ง)'),
-      { enableHighAccuracy: true, timeout: 10000 });
-  }
-  $('#locate').onclick = () => locate(h => showMap({ q: h, z: 16 }));
-  $('#mapForm').onsubmit = e => {
-    e.preventDefault();
-    const q = $('#mapQ').value.trim();
-    if (!q) return;
-    if (e.submitter?.dataset.act === 'route') {
-      const go = h => showMap({ saddr: h, daddr: q, dirflg: 'd' });
-      here ? go(here) : locate(go);
-    } else showMap({ q });
+  const up = () => {
+    div.removeEventListener('pointermove', move); div.removeEventListener('pointerup', up); div.removeEventListener('pointercancel', up);
+    app.classList.remove('drag'); div.classList.remove('drag'); save(); map?.invalidateSize();
   };
-  showMap({ q: 'Bangkok' });
-  locate(h => showMap({ q: h, z: 15 }));
+  div.addEventListener('pointermove', move); div.addEventListener('pointerup', up); div.addEventListener('pointercancel', up);
+});
+div.addEventListener('dblclick', () => { st.ratio = 50; save(); applyLayout(); });
 
-  // ---------- App view ----------
-  const frame = $('#appFrame'), notice = $('#notice');
-  let current = null;
-  const BUILTIN = [
-    { name: 'YouTube', icon: '▶️', url: 'https://www.youtube.com', embed: true },
-    { name: 'Netflix', icon: '🎬', url: 'https://www.netflix.com/browse', noframe: true },
-    { name: 'Spotify', icon: '🎵', url: 'https://open.spotify.com', noframe: true },
-    { name: 'Twitch', icon: '🟣', url: 'https://www.twitch.tv', noframe: true }
-  ];
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+$('#fs').onclick = async () => {
+  try {
+    if (fsEl()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else await (root.requestFullscreen || root.webkitRequestFullscreen).call(root, { navigationUI: 'hide' });
+  } catch { toast('เบราว์เซอร์นี้ไม่รองรับเต็มจอ ลองติดตั้งเป็นแอปแทน'); }
+};
+const fsChange = () => setIcon($('#fs'), fsEl() ? 'fsx' : 'fs');
+document.addEventListener('fullscreenchange', fsChange);
+document.addEventListener('webkitfullscreenchange', fsChange);
 
-  function ytEmbed(input) {
-    let u; try { u = new URL(input); } catch { return /^[\w-]{11}$/.test(input) ? `https://www.youtube-nocookie.com/embed/${input}?autoplay=1` : null; }
-    if (!/(^|\.)youtu(\.be|be\.com|be-nocookie\.com)$/.test(u.hostname)) return null;
-    const list = u.searchParams.get('list');
-    let id = u.hostname === 'youtu.be' ? u.pathname.slice(1) : u.searchParams.get('v') || (u.pathname.match(/\/(?:embed|shorts|live)\/([\w-]{11})/) || [])[1];
-    const q = new URLSearchParams({ autoplay: 1, playsinline: 1, rel: 0 });
-    if (list) { q.set('list', list); if (!id) return `https://www.youtube-nocookie.com/embed/videoseries?${q}`; }
-    return id ? `https://www.youtube-nocookie.com/embed/${id}?${q}` : null;
-  }
-  const say = (html, btn) => {
-    notice.hidden = !html; notice.innerHTML = html || '';
-    if (btn) { const b = document.createElement('button'); b.textContent = btn.t; b.onclick = btn.f; notice.append(document.createElement('br'), b); }
-  };
-  const pop = url => window.open(url, 'carapp', 'popup,width=900,height=600') || window.open(url, '_blank');
+// ===================================================================
+// Geo helpers
+// ===================================================================
+const R = 6371000, rad = d => d * Math.PI / 180;
+function haversine(a, b) {
+  const dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b) {
+  const y = Math.sin(rad(b[1] - a[1])) * Math.cos(rad(b[0]));
+  const x = Math.cos(rad(a[0])) * Math.sin(rad(b[0])) - Math.sin(rad(a[0])) * Math.cos(rad(b[0])) * Math.cos(rad(b[1] - a[1]));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+// project point p onto segment a-b (lat,lng) in a local metric plane
+function projectOnSeg(p, a, b) {
+  const kx = Math.cos(rad(p[0])) * 111320, ky = 110540;
+  const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * ky, bx = (b[1] - p[1]) * kx, by = (b[0] - p[0]) * ky;
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  let t = len2 ? -(ax * dx + ay * dy) / len2 : 0; t = Math.max(0, Math.min(1, t));
+  const px = ax + t * dx, py = ay + t * dy;
+  return { t, d: Math.hypot(px, py) };
+}
+const fmtDist = m => m >= 1000 ? (m >= 10000 ? Math.round(m / 1000) : (m / 1000).toFixed(1)) + ' กม.' : Math.max(10, Math.round(m / 10) * 10) + ' ม.';
+const sayDist = m => m >= 1000 ? (m >= 10000 ? Math.round(m / 1000) : (Math.round(m / 100) / 10)) + ' กิโลเมตร' : (m >= 100 ? Math.round(m / 50) * 50 : Math.round(m / 10) * 10) + ' เมตร';
+const fmtDur = s => { const m = Math.max(1, Math.round(s / 60)); return m < 60 ? m + ' นาที' : Math.floor(m / 60) + ' ชม. ' + (m % 60) + ' นาที'; };
+const fmtClock = d => d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 
-  function openUrl(raw) {
-    raw = raw.trim(); if (!raw) return;
-    const yt = ytEmbed(raw);
-    if (yt) { current = raw; frame.src = yt; return say(''); }
-    if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
-    current = raw; frame.src = raw;
-    say('ถ้าหน้าจอว่าง แปลว่าเว็บนี้ไม่อนุญาตให้ฝัง', { t: 'เปิดในหน้าต่างใหม่ ↗', f: () => pop(raw) });
+// ===================================================================
+// Thai turn instructions from OSRM steps
+// ===================================================================
+const SIDE = m => (m || '').includes('left') ? 'ซ้าย' : 'ขวา';
+function turnWord(mod) {
+  switch (mod) {
+    case 'uturn': return 'กลับรถ';
+    case 'sharp left': return 'เลี้ยวซ้ายหักศอก';
+    case 'sharp right': return 'เลี้ยวขวาหักศอก';
+    case 'left': return 'เลี้ยวซ้าย';
+    case 'right': return 'เลี้ยวขวา';
+    case 'slight left': return 'เบี่ยงซ้าย';
+    case 'slight right': return 'เบี่ยงขวา';
+    default: return 'ตรงไป';
   }
-  function openApp(a) {
-    document.querySelectorAll('#apps button').forEach(b => b.classList.toggle('on', b.dataset.name === a.name));
-    if (a.noframe) {
-      current = a.url; frame.removeAttribute('src');
-      frame.srcdoc = '<body style="margin:0;background:#141a22;color:#8a97a6;font:15px system-ui;display:grid;place-items:center;height:100vh;text-align:center;padding:20px">' + a.name + ' ไม่อนุญาตให้ฝังในเว็บอื่น<br>กดปุ่มด้านล่างเพื่อเปิดในหน้าต่างแยก</body>';
-      return say(`${a.name} บล็อกการฝัง (X-Frame-Options) และ DRM ใช้ไม่ได้ใน iframe`, { t: `เปิด ${a.name} ↗`, f: () => pop(a.url) });
-    }
-    frame.removeAttribute('srcdoc'); current = a.url;
-    if (a.embed) {
-      frame.srcdoc = '<body style="margin:0;background:#141a22;color:#8a97a6;font:15px system-ui;display:grid;place-items:center;height:100vh;text-align:center;padding:20px">วางลิงก์วิดีโอ/เพลย์ลิสต์ YouTube ในช่องด้านบน<br>แล้วกด “เปิด” เพื่อเล่นในหน้านี้</body>';
-      $('#urlQ').focus(); return say('');
-    }
-    openUrl(a.url);
+}
+function instr(step) {
+  const { type, modifier: mod, exit } = step.maneuver;
+  const name = step.name || step.ref || '';
+  let t;
+  switch (type) {
+    case 'depart': return name ? `มุ่งหน้าไปตาม${name}` : 'เริ่มออกเดินทาง';
+    case 'arrive': return 'ถึงจุดหมายปลายทาง';
+    case 'roundabout': case 'rotary': t = exit ? `เข้าวงเวียน ออกทางออกที่ ${exit}` : 'เข้าวงเวียน'; break;
+    case 'roundabout turn': t = `ที่วงเวียน ${turnWord(mod)}`; break;
+    case 'exit roundabout': case 'exit rotary': t = 'ออกจากวงเวียน'; break;
+    case 'fork': t = `ที่ทางแยก ชิด${SIDE(mod)}`; break;
+    case 'merge': t = `รวมเลน ชิด${SIDE(mod)}`; break;
+    case 'on ramp': t = `ขึ้นทางลาดด้าน${SIDE(mod)}`; break;
+    case 'off ramp': t = `ออกทางลาดด้าน${SIDE(mod)}`; break;
+    case 'end of road': t = `สุดทาง ${turnWord(mod)}`; break;
+    case 'continue': case 'new name': t = mod && mod !== 'straight' ? turnWord(mod) : 'ตรงไป'; break;
+    default: t = turnWord(mod);
   }
-  function renderDock() {
-    const box = $('#apps'); box.innerHTML = '';
-    [...BUILTIN, ...st.custom].forEach(a => {
-      const b = document.createElement('button');
-      b.dataset.name = a.name; b.textContent = (a.icon || '🌐') + ' ' + a.name;
-      b.onclick = () => openApp(a);
-      if (a.custom) b.oncontextmenu = e => { e.preventDefault(); if (confirm(`ลบ ${a.name}?`)) { st.custom = st.custom.filter(x => x !== a); save(); renderDock(); } };
-      box.append(b);
+  return name ? `${t} เข้าสู่${name}` : t;
+}
+function arrowFor(step) {
+  const { type, modifier: m = 'straight' } = step.maneuver;
+  if (type === 'arrive') return svg('flag');
+  if (/roundabout|rotary/.test(type) && type !== 'roundabout turn') return svg('round');
+  if (m === 'uturn') return svg('uturn');
+  const flip = m.includes('left') ? ' style="transform:scaleX(-1)"' : '';
+  if (m.startsWith('slight')) return svg('slight', flip);
+  if (m.includes('left') || m.includes('right')) return svg('right', flip);
+  return svg('up');
+}
+
+// ===================================================================
+// Map
+// ===================================================================
+const TILE = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
+const NOMI = 'https://nominatim.openstreetmap.org/';
+let map = null;
+const L_ = window.L;
+const here = { ll: null, acc: null, heading: null, speed: null, prev: null };
+let meMarker, destMarker, routeLines = [], follow = true;
+
+if (L_) {
+  map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
+  L_.tileLayer(TILE, { maxZoom: 20, subdomains: 'abcd', attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a>' }).addTo(map);
+  map.attributionControl.setPrefix(false);
+  map.on('dragstart', () => setFollow(false));
+  map.on('moveend', () => store.set('carscreen.view', [map.getCenter().lat, map.getCenter().lng]));
+  map.on('contextmenu', e => pickDest({ lat: e.latlng.lat, lng: e.latlng.lng, name: 'ตำแหน่งที่เลือก', sub: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}` }));
+} else {
+  $('#map').innerHTML = '<div class="empty">โหลดแผนที่ไม่ได้</div>';
+}
+
+function setFollow(on) {
+  follow = on;
+  $('#recenter').classList.toggle('off', !on);
+  if (on && here.ll && map) map.setView(here.ll, nav.active ? 17 : Math.max(map.getZoom(), 15), { animate: true });
+}
+$('#recenter').onclick = () => { if (!here.ll) startGeo(true); setFollow(true); };
+
+function drawMe() {
+  if (!map || !here.ll) return;
+  const html = `<div class="me${here.heading != null ? ' dir' : ''}"><b style="transform:rotate(${here.heading || 0}deg)"></b><i></i></div>`;
+  if (!meMarker) meMarker = L_.marker(here.ll, { icon: L_.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
+  else { meMarker.setLatLng(here.ll); meMarker.setIcon(L_.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] })); }
+}
+
+let geoId = null, geoAsked = false;
+function startGeo(user) {
+  if (!navigator.geolocation) return toast('อุปกรณ์นี้ไม่รองรับ GPS');
+  if (geoId != null) { if (user && !here.ll) toast('กำลังหาตำแหน่ง…'); return; }
+  geoAsked = true;
+  geoId = navigator.geolocation.watchPosition(onPos, err => {
+    geoId != null && navigator.geolocation.clearWatch(geoId); geoId = null;
+    if (user || nav.active) toast(err.code === 1 ? 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง เปิดสิทธิ์ตำแหน่งในการตั้งค่าเบราว์เซอร์' : 'หาตำแหน่งไม่ได้ ลองอีกครั้ง');
+  }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+}
+function onPos(p) {
+  const ll = [p.coords.latitude, p.coords.longitude];
+  const first = !here.ll;
+  if (here.ll && haversine(here.ll, ll) > 3) here.heading = bearing(here.ll, ll);
+  if (p.coords.heading != null && !isNaN(p.coords.heading) && (p.coords.speed || 0) > 1) here.heading = p.coords.heading;
+  here.prev = here.ll; here.ll = ll; here.acc = p.coords.accuracy; here.speed = p.coords.speed;
+  drawMe();
+  if (first && follow && !nav.route) map?.setView(ll, 15);
+  else if (follow && map) map.panTo(ll, { animate: true, duration: .5 });
+  if (nav.active) navTick();
+}
+
+// ---------- Search ----------
+async function getJSON(url, ms = 8000, opts = {}) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctl.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+const qEl = $('#q'), resEl = $('#results');
+function showResults(html) { resEl.innerHTML = html; resEl.hidden = !html; paintIcons(resEl); }
+function renderRecent() {
+  if (!st.recentDest.length) return showResults('');
+  showResults('<div class="label">ล่าสุด</div>' + st.recentDest.map((d, i) =>
+    `<button class="ritem" data-recent="${i}"><span class="ic" data-i="history"></span><div class="grow"><div class="title">${esc(d.name)}</div><div class="sub title">${esc(d.sub || '')}</div></div></button>`).join(''));
+}
+qEl.addEventListener('focus', () => { if (!qEl.value) renderRecent(); });
+qEl.addEventListener('input', () => { $('#qClear').hidden = !qEl.value; if (!qEl.value) renderRecent(); });
+$('#qClear').onclick = () => { qEl.value = ''; $('#qClear').hidden = true; showResults(''); qEl.focus(); };
+document.addEventListener('pointerdown', e => {
+  if (!resEl.hidden && !e.target.closest('#results,#search')) showResults('');
+});
+let searchSeq = 0;
+$('#search').onsubmit = async e => {
+  e.preventDefault();
+  const q = qEl.value.trim(); if (!q) return;
+  const coord = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (coord) { qEl.blur(); return pickDest({ lat: +coord[1], lng: +coord[2], name: q, sub: 'พิกัด' }); }
+  const seq = ++searchSeq;
+  showResults('<div class="label">กำลังค้นหา…</div>');
+  const c = here.ll || (map ? [map.getCenter().lat, map.getCenter().lng] : null);
+  const p = new URLSearchParams({ q, format: 'jsonv2', limit: 8, 'accept-language': 'th,en', addressdetails: 0 });
+  if (c) { p.set('viewbox', [c[1] - .6, c[0] + .6, c[1] + .6, c[0] - .6].join(',')); p.set('bounded', 0); }
+  try {
+    const list = await getJSON(NOMI + 'search?' + p);
+    if (seq !== searchSeq) return;
+    if (!list.length) return showResults('<div class="label">ไม่พบสถานที่ ลองพิมพ์ชื่ออื่น หรือกดค้างบนแผนที่เพื่อเลือกจุด</div>');
+    const items = list.map(r => {
+      const parts = r.display_name.split(', ');
+      return { lat: +r.lat, lng: +r.lon, name: r.name || parts[0], sub: parts.slice(1, 4).join(', ') };
     });
-    const add = document.createElement('button'); add.textContent = '＋';
-    add.onclick = () => {
-      const url = prompt('URL ของแอป/เว็บ'); if (!url) return;
-      const full = /^https?:\/\//i.test(url) ? url : 'https://' + url;
-      let name; try { name = new URL(full).hostname.replace(/^www\./, ''); } catch { return alert('URL ไม่ถูกต้อง'); }
-      st.custom.push({ name, url: full, custom: true }); save(); renderDock();
-    };
-    box.append(add);
+    if (c) items.forEach(i => i.d = haversine(c, [i.lat, i.lng]));
+    resEl._items = items;
+    showResults(items.map((it, i) =>
+      `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
+  } catch {
+    if (seq === searchSeq) showResults('<div class="label">ค้นหาไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง</div>');
   }
-  $('#urlForm').onsubmit = e => { e.preventDefault(); openUrl($('#urlQ').value); };
-  $('#popout').onclick = () => current && pop(current);
+};
+resEl.addEventListener('click', e => {
+  const b = e.target.closest('.ritem'); if (!b) return;
+  const d = b.dataset.res != null ? resEl._items[+b.dataset.res] : st.recentDest[+b.dataset.recent];
+  qEl.blur(); pickDest(d);
+});
 
-  // ---------- Install (PWA) ----------
-  const inst = $('#install');
-  let promptEv = null;
-  const standalone = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone;
-  addEventListener('beforeinstallprompt', e => { e.preventDefault(); promptEv = e; inst.hidden = false; });
-  addEventListener('appinstalled', () => { inst.hidden = true; promptEv = null; });
-  if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) inst.hidden = false;
-  inst.onclick = async () => {
-    if (promptEv) { promptEv.prompt(); await promptEv.userChoice; promptEv = null; inst.hidden = true; }
-    else say('iPhone/iPad: กดปุ่มแชร์ (⬆) ใน Safari แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”');
-  };
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+// ---------- Destination & route ----------
+const nav = { dest: null, route: null, active: false, line: [], cum: [], stepAt: [], seg: 0, step: 1, said: {}, off: 0, lastReroute: 0, routing: false };
 
-  applyLayout(); renderDock(); openApp(BUILTIN[0]);
+function pickDest(d) {
+  showResults(''); qEl.value = d.name; $('#qClear').hidden = false;
+  nav.dest = d;
+  st.recentDest = [d, ...st.recentDest.filter(x => Math.abs(x.lat - d.lat) + Math.abs(x.lng - d.lng) > 1e-5)].slice(0, 8).map(({ lat, lng, name, sub }) => ({ lat, lng, name, sub }));
+  save();
+  if (map) {
+    destMarker?.remove();
+    destMarker = L_.marker([d.lat, d.lng], { icon: L_.divIcon({ className: '', html: `<div class="pin">${svg('pin')}</div>`, iconSize: [30, 40], iconAnchor: [15, 40] }) }).addTo(map);
+  }
+  $('#rcName').textContent = d.name;
+  $('#rcMeta').textContent = 'กำลังหาเส้นทาง…';
+  $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card');
+  route();
+}
+
+async function route(reroute) {
+  if (!nav.dest) return;
+  if (!here.ll) {
+    startGeo(true);
+    $('#rcMeta').textContent = 'รอตำแหน่ง GPS…';
+    const ok = await new Promise(res => { const t0 = Date.now(), iv = setInterval(() => { if (here.ll || Date.now() - t0 > 15000) { clearInterval(iv); res(!!here.ll); } }, 300); });
+    if (!ok) { $('#rcMeta').textContent = 'ต้องเปิดตำแหน่ง (GPS) เพื่อหาเส้นทาง'; return; }
+  }
+  nav.routing = true;
+  const from = here.ll, to = [nav.dest.lat, nav.dest.lng];
+  const url = `${OSRM}${from[1]},${from[0]};${to[1]},${to[0]}?overview=false&steps=true&geometries=geojson`;
+  try {
+    const j = await getJSON(url, 12000);
+    if (j.code !== 'Ok' || !j.routes?.length) throw new Error(j.code);
+    setRoute(j.routes[0]);
+    if (!reroute) {
+      $('#rcMeta').textContent = `${fmtDist(nav.route.distance)} · ${fmtDur(nav.route.duration)}`;
+      map?.fitBounds(L_.latLngBounds(nav.line), { padding: [60, 60] });
+      setFollow(false);
+    }
+  } catch (err) {
+    if (reroute) toast('คำนวณเส้นทางใหม่ไม่ได้');
+    else $('#rcMeta').textContent = err?.message === 'NoRoute' ? 'ไม่พบเส้นทางขับรถไปจุดนี้' : 'หาเส้นทางไม่ได้ ตรวจสอบอินเทอร์เน็ต';
+  } finally { nav.routing = false; }
+}
+
+function setRoute(r) {
+  const steps = r.legs[0].steps;
+  const line = [], stepAt = [];
+  steps.forEach(s => {
+    const pts = s.geometry.coordinates.map(c => [c[1], c[0]]);
+    if (line.length && pts.length) pts.shift();
+    stepAt.push(Math.max(0, line.length - (line.length ? 1 : 0)));
+    line.push(...pts);
+  });
+  if (line.length < 2) line.push(line[0] || here.ll);
+  const cum = [0];
+  for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + haversine(line[i - 1], line[i]));
+  Object.assign(nav, { route: r, steps, line, cum, stepAt: stepAt.map(i => cum[i]), seg: 0, step: 1, said: {}, off: 0 });
+  if (map) {
+    routeLines.forEach(l => l.remove());
+    routeLines = [
+      L_.polyline(line, { color: '#0b2a55', weight: 11, opacity: .9, interactive: false }).addTo(map),
+      L_.polyline(line, { color: '#5b9dff', weight: 7, opacity: 1, interactive: false }).addTo(map)
+    ];
+  }
+  if (nav.active) navTick();
+}
+
+function clearRoute() {
+  stopNav(true);
+  nav.dest = nav.route = null;
+  routeLines.forEach(l => l.remove()); routeLines = [];
+  destMarker?.remove(); destMarker = null;
+  $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
+  qEl.value = ''; $('#qClear').hidden = true;
+}
+$('#rcClose').onclick = clearRoute;
+$('#rcGmaps').onclick = () => {
+  const d = nav.dest; if (!d) return;
+  openExternal(`https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lng}&travelmode=driving&dir_action=navigate`);
+};
+$('#rcGo').onclick = () => { if (nav.route) startNav(); else route(); };
+
+// ---------- Turn-by-turn ----------
+function speak(text) {
+  if (!st.voice || !('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'th-TH'; u.rate = 1;
+    const v = speechSynthesis.getVoices().find(v => v.lang?.toLowerCase().startsWith('th'));
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch {}
+}
+function setVoiceIcon() { setIcon($('#nfVoice'), st.voice ? 'vol' : 'mute'); }
+$('#nfVoice').onclick = () => { st.voice = !st.voice; save(); setVoiceIcon(); if (!st.voice) speechSynthesis?.cancel(); toast(st.voice ? 'เปิดเสียงนำทาง' : 'ปิดเสียงนำทาง', 1500); };
+
+function startNav() {
+  nav.active = true; nav.said = {};
+  $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
+  $('#mapPane').classList.add('navigating');
+  $('#navBanner').hidden = $('#navFoot').hidden = $('#speed').hidden = false;
+  setVoiceIcon();
+  if (st.mode === 'media') { st.mode = 'split'; applyLayout(); }
+  keepAwake(true);
+  setFollow(true);
+  navTick();
+  const s = nav.steps[nav.step];
+  speak('เริ่มนำทาง ' + (s ? `อีก ${sayDist(nav.stepAt[nav.step] - progress())} ${instr(s)}` : ''));
+}
+function stopNav(silent) {
+  if (!nav.active) return;
+  nav.active = false;
+  $('#mapPane').classList.remove('navigating');
+  $('#navBanner').hidden = $('#navFoot').hidden = $('#speed').hidden = true;
+  if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); }
+  if (!wantAwake()) keepAwake(false);
+}
+$('#nfStop').onclick = () => { stopNav(); clearRoute(); };
+
+let progAlong = 0;
+const progress = () => progAlong;
+function navTick() {
+  if (!nav.route || !here.ll) return;
+  const { line, cum } = nav;
+  // snap: search a window ahead of the last segment first, then everything
+  let best = { d: Infinity, i: nav.seg, t: 0 };
+  const scan = (a, b) => { for (let i = Math.max(0, a); i < Math.min(line.length - 1, b); i++) { const p = projectOnSeg(here.ll, line[i], line[i + 1]); if (p.d < best.d) best = { d: p.d, i, t: p.t }; } };
+  scan(nav.seg - 3, nav.seg + 150);
+  if (best.d > 60) scan(0, line.length);
+  nav.seg = best.i;
+  const along = cum[best.i] + best.t * (cum[best.i + 1] - cum[best.i]);
+  progAlong = along;
+  const total = cum[cum.length - 1], remain = Math.max(0, total - along);
+
+  // off-route → reroute
+  const tol = Math.max(40, Math.min(here.acc || 0, 80));
+  nav.off = best.d > tol ? nav.off + 1 : 0;
+  if (nav.off >= 3 && !nav.routing && Date.now() - nav.lastReroute > 8000) {
+    nav.lastReroute = Date.now(); nav.off = 0;
+    $('#nbText').textContent = 'กำลังคำนวณเส้นทางใหม่…';
+    speak('กำลังคำนวณเส้นทางใหม่');
+    route(true);
+    return;
+  }
+
+  // arrival
+  if (remain < 25 || haversine(here.ll, [nav.dest.lat, nav.dest.lng]) < 20) {
+    speak('ถึงจุดหมายปลายทางแล้ว');
+    toast('ถึงจุดหมายปลายทางแล้ว', 5000);
+    stopNav(true); clearRoute();
+    return;
+  }
+
+  // next maneuver
+  let i = 1;
+  while (i < nav.steps.length - 1 && nav.stepAt[i] <= along + 8) i++;
+  nav.step = i;
+  const step = nav.steps[i], dist = nav.stepAt[i] - along;
+  $('#nbArrow').innerHTML = arrowFor(step);
+  $('#nbDist').textContent = fmtDist(dist);
+  $('#nbText').textContent = instr(step);
+  const nxt = nav.steps[i + 1];
+  const then = nxt && nav.stepAt[i + 1] - nav.stepAt[i] < 250;
+  $('#nbThen').hidden = !then;
+  if (then) $('#nbThen').innerHTML = `จากนั้น ${arrowFor(nxt)} ${esc(instr(nxt))}`;
+
+  // voice prompts at ~1 km, ~300 m and at the turn
+  const said = nav.said[i] || (nav.said[i] = {});
+  const legLen = nav.stepAt[i] - (nav.stepAt[i - 1] || 0);
+  if (dist <= 60 && !said.now) { said.now = said.mid = said.far = 1; speak(instr(step) + (then ? ` จากนั้น ${instr(nxt)}` : '')); }
+  else if (dist <= 320 && dist > 120 && !said.mid) { said.mid = said.far = 1; speak(`อีก ${sayDist(dist)} ${instr(step)}`); }
+  else if (dist <= 1100 && dist > 700 && legLen > 1500 && !said.far) { said.far = 1; speak(`อีก ${sayDist(dist)} ${instr(step)}`); }
+
+  // footer
+  const secs = nav.route.duration * (remain / Math.max(1, total));
+  $('#nfEta').textContent = 'ถึง ' + fmtClock(new Date(Date.now() + secs * 1000));
+  $('#nfMeta').textContent = `${fmtDur(secs)} · ${fmtDist(remain)}`;
+  $('#speed b').textContent = here.speed != null && here.speed >= 0 ? Math.round(here.speed * 3.6) : '–';
+  if (follow && map) map.setView(here.ll, Math.max(map.getZoom(), 16), { animate: true });
+}
+
+// ===================================================================
+// Media: launcher
+// ===================================================================
+const APPS = [
+  { id: 'youtube', name: 'YouTube', color: '#ff0033', icon: 'play', view: 'yt' },
+  { id: 'web', name: 'เว็บ', color: '#3a4250', icon: 'globe', view: 'web' },
+  { id: 'netflix', name: 'Netflix', color: '#e50914', letter: 'N', url: 'https://www.netflix.com/browse', ext: true },
+  { id: 'ytmusic', name: 'YT Music', color: '#c4102b', letter: '♪', url: 'https://music.youtube.com', ext: true },
+  { id: 'spotify', name: 'Spotify', color: '#1db954', letter: 'S', url: 'https://open.spotify.com', ext: true },
+  { id: 'gmaps', name: 'Google Maps', color: '#1a73e8', icon: 'map', url: 'https://www.google.com/maps', ext: true }
+];
+// a real link click: works under popup blockers and never navigates the app itself away
+function openExternal(url) {
+  const a = Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener' });
+  document.body.append(a); a.click(); a.remove();
+}
+function renderTiles() {
+  const all = [...APPS, ...st.custom.map((c, i) => ({ ...c, customIdx: i, color: '#2b3340', letter: (c.name[0] || '?').toUpperCase() }))];
+  $('#tiles').innerHTML = all.map((a, i) => `
+    <button class="tile" data-tile="${i}" ${a.customIdx != null ? `data-custom="${a.customIdx}"` : ''}>
+      <div class="face" style="background:${a.color}">${a.icon ? svg(a.icon) : esc(a.letter)}</div>
+      <span>${esc(a.name)}</span>
+      ${a.ext ? `<i class="ext">${svg('open')}</i>` : ''}
+    </button>`).join('') + `
+    <button class="tile" id="addTile"><div class="face" style="background:transparent;border:2px dashed rgba(255,255,255,.2)">${svg('add')}</div><span>เพิ่ม</span></button>`;
+  $('#tiles')._all = all;
+}
+$('#tiles').addEventListener('click', e => {
+  const t = e.target.closest('.tile'); if (!t) return;
+  if (t.id === 'addTile') return addAppSheet();
+  const a = $('#tiles')._all[+t.dataset.tile];
+  if (a.view) return showView(a.view);
+  if (a.ext) return openExternal(a.url);
+  showView('web'); loadWeb(a.url);
+});
+$('#tiles').addEventListener('contextmenu', e => {
+  const t = e.target.closest('[data-custom]'); if (!t) return;
+  e.preventDefault();
+  const c = st.custom[+t.dataset.custom];
+  openSheet(`<h2>ลบ “${esc(c.name)}”?</h2><div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn danger" id="del">ลบ</button></div>`, s => {
+    s.querySelector('#del').onclick = () => { st.custom.splice(+t.dataset.custom, 1); save(); renderTiles(); closeSheet(); };
+  });
+});
+function addAppSheet() {
+  openSheet(`<h2>เพิ่มแอป</h2>
+    <label>ชื่อ<input type="text" id="aName" placeholder="เช่น Joox"></label>
+    <label>ลิงก์<input type="url" id="aUrl" placeholder="https://…" inputmode="url" autocapitalize="off"></label>
+    <label class="switch">เปิดในหน้าต่างใหม่ (สำหรับเว็บที่ไม่ยอมแสดงในจอแบ่ง)<input type="checkbox" id="aExt"></label>
+    <div class="sub">กดค้างที่ไอคอนเพื่อลบ</div>
+    <div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn primary" id="aSave">เพิ่ม</button></div>`, s => {
+    s.querySelector('#aUrl').focus();
+    s.querySelector('#aSave').onclick = () => {
+      let url = s.querySelector('#aUrl').value.trim(); if (!url) return;
+      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      let host; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { return toast('ลิงก์ไม่ถูกต้อง'); }
+      st.custom.push({ name: s.querySelector('#aName').value.trim() || host, url, ext: s.querySelector('#aExt').checked });
+      save(); renderTiles(); closeSheet();
+    };
+  });
+}
+function showView(v) {
+  ['home', 'yt', 'web'].forEach(id => $('#' + id).hidden = id !== v);
+  st.lastView = v; save();
+  if (v === 'yt') ytShowIdle();
+  if (v === 'web' && !$('#webFrame').getAttribute('src')) setTimeout(() => $('#webQ').focus(), 50);
+  if (v !== 'yt') yt.player?.pauseVideo?.();
+}
+$$('.homeBtn').forEach(b => b.onclick = () => showView('home'));
+
+// ---------- Web view ----------
+function loadWeb(url) {
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  const v = ytParse(url);
+  if (v) { showView('yt'); return ytPlayParsed(v); }
+  $('#webQ').value = url; $('#webFrame').src = url; $('#webQ').blur();
+  toast('ถ้าหน้าว่าง แปลว่าเว็บนี้ไม่ยอมแสดงในจอแบ่ง กด ↗ เพื่อเปิดแยก', 5000);
+}
+$('#webForm').onsubmit = e => { e.preventDefault(); loadWeb($('#webQ').value.trim()); };
+$('#webPop').onclick = () => { const u = $('#webFrame').getAttribute('src') || $('#webQ').value.trim(); if (u) openExternal(u); };
+
+// ===================================================================
+// YouTube
+// ===================================================================
+const PIPED = ['https://pipedapi.kavin.rocks', 'https://api.piped.private.coffee', 'https://pipedapi.adminforge.de'];
+const INVID = ['https://inv.nadeko.net', 'https://invidious.nerdvpn.de', 'https://yewtu.be', 'https://invidious.f5.si'];
+const yt = { player: null, apiReady: null, queue: [], idx: -1, playing: false, cur: null };
+
+function ytParse(input) {
+  input = (input || '').trim();
+  if (/^[\w-]{11}$/.test(input)) return { id: input };
+  let u; try { u = new URL(/^https?:\/\//i.test(input) ? input : 'https://' + input); } catch { return null; }
+  if (!/(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be)$/.test(u.hostname)) return null;
+  const list = u.searchParams.get('list') || null;
+  let id = u.hostname.endsWith('youtu.be') ? u.pathname.slice(1, 12) : u.searchParams.get('v');
+  if (!id) id = (u.pathname.match(/\/(?:embed|shorts|live|v)\/([\w-]{11})/) || [])[1];
+  const t = u.searchParams.get('t') || u.searchParams.get('start');
+  const start = t ? (/^\d+$/.test(t) ? +t : (+(t.match(/(\d+)h/) || [0, 0])[1] * 3600 + +(t.match(/(\d+)m/) || [0, 0])[1] * 60 + +(t.match(/(\d+)s/) || [0, 0])[1])) : 0;
+  if (id && !/^[\w-]{11}$/.test(id)) id = null;
+  if (!id && !list) return null;
+  return { id: id || null, list, start };
+}
+const fmtSecs = s => { if (!s) return ''; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+
+async function ytSearch(q) {
+  if (st.ytKey) {
+    const p = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: 25, q, key: st.ytKey, videoEmbeddable: 'true', regionCode: 'TH', relevanceLanguage: 'th' });
+    const j = await getJSON('https://www.googleapis.com/youtube/v3/search?' + p);
+    return j.items.filter(x => x.id?.videoId).map(x => ({ id: x.id.videoId, title: decode(x.snippet.title), author: decode(x.snippet.channelTitle) }));
+  }
+  const enc = encodeURIComponent(q);
+  const tries = [
+    ...PIPED.map(b => async () => (await getJSON(`${b}/search?q=${enc}&filter=videos`, 7000)).items
+      .filter(x => x.url && (x.type || 'stream') === 'stream')
+      .map(x => ({ id: (x.url.match(/v=([\w-]{11})/) || [])[1], title: x.title, author: x.uploaderName, dur: x.duration }))),
+    ...INVID.map(b => async () => (await getJSON(`${b}/api/v1/search?q=${enc}&type=video`, 7000))
+      .filter(x => x.type === 'video')
+      .map(x => ({ id: x.videoId, title: x.title, author: x.author, dur: x.lengthSeconds })))
+  ];
+  // start with the source that worked last time
+  const order = tries.map((f, i) => i), first = store.get('carscreen.ytsrc', 0);
+  order.sort((a, b) => (a === first ? -1 : b === first ? 1 : a - b));
+  for (const i of order) {
+    try {
+      const r = (await tries[i]()).filter(x => x.id);
+      if (r.length) { store.set('carscreen.ytsrc', i); return r; }
+    } catch {}
+  }
+  throw new Error('no-source');
+}
+
+function vItem(v, i, on) {
+  return `<button class="vitem${on ? ' on' : ''}" data-v="${i}">
+    <div class="th"><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg">${v.dur ? `<span class="dur">${fmtSecs(v.dur)}</span>` : ''}</div>
+    <div class="grow"><div class="t">${esc(v.title || 'วิดีโอ YouTube')}</div><div class="sub title">${esc(v.author || '')}</div></div></button>`;
+}
+function renderList(items, label) {
+  const l = $('#ytList');
+  l._items = items;
+  l.innerHTML = (label ? `<div class="label sub" style="padding:6px 6px 2px">${esc(label)}</div>` : '') +
+    items.map((v, i) => vItem(v, i, yt.cur && v.id === yt.cur.id)).join('');
+}
+function ytShowIdle() {
+  if (yt.cur || $('#ytList')._items?.length) return;
+  if (st.ytHistory.length) renderList(st.ytHistory, 'ดูล่าสุด');
+  else $('#ytList').innerHTML = `<div class="empty">${svg('play', ' style="width:48px;height:48px;color:#ff0033"')}<div>ค้นหาวิดีโอ หรือวางลิงก์ YouTube ในช่องด้านบน</div></div>`;
+}
+$('#ytForm').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('#ytQ').value.trim(); if (!q) return;
+  $('#ytQ').blur();
+  const parsed = ytParse(q);
+  if (parsed) { $('#ytQ').value = ''; return ytPlayParsed(parsed); }
+  openList(true);
+  $('#ytList').innerHTML = '<div class="empty">กำลังค้นหา…</div>';
+  try {
+    const items = await ytSearch(q);
+    yt.queue = items; yt.idx = -1;
+    renderList(items);
+  } catch {
+    $('#ytList').innerHTML = `<div class="empty"><div>ค้นหาไม่ได้ในตอนนี้${st.ytKey ? ' (ตรวจสอบ API key)' : ''}</div>
+      <div class="sub">วางลิงก์วิดีโอแทนได้ หรือใส่ YouTube API key ในตั้งค่าเพื่อให้ค้นหาได้เสถียร</div>
+      <div class="row"><button class="btn" id="ytOpenSearch"><span class="ic" data-i="open"></span>ค้นใน YouTube</button><button class="btn" id="ytKeyBtn">ตั้งค่า</button></div></div>`;
+    paintIcons($('#ytList'));
+    $('#ytOpenSearch').onclick = () => openExternal('https://www.youtube.com/results?search_query=' + encodeURIComponent(q));
+    $('#ytKeyBtn').onclick = settingsSheet;
+  }
+};
+$('#ytList').addEventListener('click', e => {
+  const b = e.target.closest('.vitem'); if (!b) return;
+  const items = $('#ytList')._items;
+  yt.queue = items; yt.idx = +b.dataset.v;
+  ytPlay(items[yt.idx]);
+});
+function openList(on) { $('#yt').classList.toggle('list-open', on); }
+$('#ytListBtn').onclick = () => openList(!$('#yt').classList.contains('list-open'));
+
+function loadYTApi() {
+  if (yt.apiReady) return yt.apiReady;
+  yt.apiReady = new Promise((res, rej) => {
+    if (window.YT?.Player) return res();
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { prev?.(); res(); };
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.onerror = rej;
+    document.head.append(s);
+    setTimeout(() => rej(new Error('timeout')), 10000);
+  }).catch(e => { yt.apiReady = null; throw e; });
+  return yt.apiReady;
+}
+
+function ytPlayParsed(p) {
+  if (p.id) {
+    const v = { id: p.id, title: '', author: '', start: p.start, list: p.list };
+    yt.queue = [v]; yt.idx = 0; ytPlay(v);
+  } else ytPlay({ list: p.list, title: 'เพลย์ลิสต์' });
+}
+
+async function ytPlay(v) {
+  yt.cur = v;
+  $('#yt').classList.add('playing'); $('#ytStage').hidden = false; $('#ytErr').hidden = true; $('#ytListBtn').hidden = false;
+  if (yt.queue.length > 1) renderList(yt.queue); else openList(false);
+  if (v.id) addHistory(v);
+  const vars = { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, origin: location.origin, start: v.start || 0 };
+  try {
+    await loadYTApi();
+    if (yt.player && yt.player.loadVideoById) {
+      if (v.id && !v.list) yt.player.loadVideoById({ videoId: v.id, startSeconds: v.start || 0 });
+      else yt.player.loadPlaylist({ list: v.list, listType: 'playlist' });
+      return;
+    }
+    $('#ytHost').innerHTML = '<div id="ytPlayer"></div>';
+    yt.player = new YT.Player('ytPlayer', {
+      host: 'https://www.youtube-nocookie.com',
+      videoId: v.id || undefined,
+      playerVars: v.list ? { ...vars, listType: 'playlist', list: v.list } : vars,
+      events: {
+        onStateChange: e => {
+          yt.playing = e.data === 1;
+          if (yt.playing) keepAwake(true); else if (!wantAwake()) keepAwake(false);
+          if (e.data === 0 && st.autoNext) ytNext();
+          if (e.data === 1) refreshTitle();
+        },
+        onError: e => ytError(e.data)
+      }
+    });
+  } catch {
+    // IFrame API unavailable: plain embed still plays
+    yt.player = null;
+    const q = new URLSearchParams({ autoplay: 1, playsinline: 1, rel: 0 });
+    if (v.list) q.set('list', v.list);
+    if (v.start) q.set('start', v.start);
+    $('#ytHost').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${v.id || 'videoseries'}?${q}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  }
+}
+function refreshTitle() {
+  const d = yt.player?.getVideoData?.(); if (!d || !yt.cur) return;
+  if (!yt.cur.title && d.title) {
+    yt.cur.title = d.title; yt.cur.author = d.author; addHistory(yt.cur);
+    if (!$('#yt').classList.contains('list-open')) return;
+    renderList(yt.queue);
+  }
+}
+function ytNext() {
+  if (yt.idx >= 0 && yt.idx < yt.queue.length - 1) { yt.idx++; ytPlay(yt.queue[yt.idx]); }
+}
+function ytError(code) {
+  const embedOff = [101, 150, 152, 153].includes(code);
+  $('#ytErrMsg').textContent = embedOff ? 'เจ้าของวิดีโอไม่อนุญาตให้เล่นนอก YouTube' : code === 100 ? 'ไม่พบวิดีโอนี้ (อาจถูกลบหรือเป็นส่วนตัว)' : 'เล่นวิดีโอนี้ไม่ได้';
+  $('#ytErrNext').hidden = !(yt.idx >= 0 && yt.idx < yt.queue.length - 1);
+  $('#ytErr').hidden = false;
+}
+$('#ytErrOpen').onclick = () => { const v = yt.cur; if (v) openExternal(v.id ? `https://www.youtube.com/watch?v=${v.id}` : `https://www.youtube.com/playlist?list=${v.list}`); };
+$('#ytErrNext').onclick = ytNext;
+function addHistory(v) {
+  st.ytHistory = [{ id: v.id, title: v.title, author: v.author }, ...st.ytHistory.filter(x => x.id !== v.id)].slice(0, 30);
+  save();
+}
+
+// ===================================================================
+// Settings & install
+// ===================================================================
+function settingsSheet() {
+  openSheet(`<h2>ตั้งค่า</h2>
+    <label class="switch">เสียงนำทาง<input type="checkbox" id="sVoice" ${st.voice ? 'checked' : ''}></label>
+    <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
+    <label>YouTube API key (ไม่บังคับ ช่วยให้ค้นหาเสถียร)<input type="password" id="sKey" value="${esc(st.ytKey)}" placeholder="AIza…" autocapitalize="off" autocomplete="off"></label>
+    <div class="sub">สร้างฟรีที่ Google Cloud Console → เปิด “YouTube Data API v3” → Credentials → API key</div>
+    <div class="row"><button class="btn" id="sReset">รีเซ็ตหน้าจอ</button><button class="btn primary" id="sSave">บันทึก</button></div>`, s => {
+    s.querySelector('#sSave').onclick = () => {
+      st.voice = s.querySelector('#sVoice').checked; st.autoNext = s.querySelector('#sNext').checked; st.ytKey = s.querySelector('#sKey').value.trim();
+      save(); setVoiceIcon(); closeSheet(); toast('บันทึกแล้ว', 1500);
+    };
+    s.querySelector('#sReset').onclick = () => { Object.assign(st, { ratio: 50, swapped: false, stack: null, mode: 'split' }); save(); applyLayout(); closeSheet(); };
+  });
+}
+$('#settingsBtn').onclick = settingsSheet;
+
+let installEv = null;
+const standalone = matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches || navigator.standalone;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEv = e; $('#install').hidden = false; });
+addEventListener('appinstalled', () => { installEv = null; $('#install').hidden = true; toast('ติดตั้งแล้ว เปิดได้จากหน้าจอหลัก'); });
+if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) $('#install').hidden = false;
+$('#install').onclick = async () => {
+  if (installEv) { installEv.prompt(); await installEv.userChoice; installEv = null; $('#install').hidden = true; }
+  else toast('Safari: กดปุ่มแชร์ แล้วเลือก “เพิ่มไปยังหน้าจอโฮม”', 6000);
+};
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ===================================================================
+// Boot
+// ===================================================================
+paintIcons();
+applyLayout();
+renderTiles();
+showView(st.lastView === 'web' ? 'home' : st.lastView);
+setVoiceIcon();
+wake();
+startGeo();
+
+// exposed for automated tests
+window.__car = { st, nav, yt, instr, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

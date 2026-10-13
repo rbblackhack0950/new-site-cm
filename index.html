@@ -3,59 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#0b0f14">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0c0d10">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Car Screen">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Car Screen</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/192.png">
 <link rel="apple-touch-icon" href="icons/192.png">
-<meta name="apple-mobile-web-app-title" content="Car Screen">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app" class="split">
-  <section id="paneA" class="pane">
-    <header class="bar">
-      <form id="mapForm" class="grow">
-        <input id="mapQ" type="search" placeholder="ค้นหาสถานที่ / ปลายทาง" enterkeyhint="search">
-        <button title="นำทางจากตำแหน่งปัจจุบัน" data-act="route">➤</button>
-        <button type="button" id="locate" title="ตำแหน่งของฉัน">◎</button>
-      </form>
-      <button class="icon" data-max="paneA" title="เต็มจอ">⛶</button>
-    </header>
-    <iframe id="mapFrame" allow="geolocation" referrerpolicy="no-referrer-when-downgrade" title="Map"></iframe>
+<div id="app">
+  <!-- ===== Map / navigation ===== -->
+  <section id="mapPane" class="pane">
+    <div id="map"></div>
+
+    <form id="search" class="glass pill autohide" autocomplete="off">
+      <span class="ic" data-i="search"></span>
+      <input id="q" type="search" placeholder="ไปที่ไหนดี" enterkeyhint="search" aria-label="ค้นหาปลายทาง">
+      <button type="button" id="qClear" class="btn ghost" hidden aria-label="ล้าง" data-i="close"></button>
+    </form>
+    <div id="results" class="glass card list" hidden></div>
+
+    <div id="routeCard" class="glass card" hidden>
+      <div class="rc-head">
+        <div class="grow">
+          <div id="rcName" class="title"></div>
+          <div id="rcMeta" class="sub"></div>
+        </div>
+        <button id="rcClose" class="btn ghost" aria-label="ยกเลิก" data-i="close"></button>
+      </div>
+      <div class="row">
+        <button id="rcGo" class="btn primary grow"><span class="ic" data-i="nav"></span>เริ่มนำทาง</button>
+        <button id="rcGmaps" class="btn" aria-label="เปิดใน Google Maps"><span class="ic" data-i="open"></span>Maps</button>
+      </div>
+    </div>
+
+    <div id="navBanner" hidden>
+      <div class="nb-main">
+        <span id="nbArrow" class="nb-arrow"></span>
+        <div class="grow">
+          <div id="nbDist" class="nb-dist"></div>
+          <div id="nbText" class="nb-text"></div>
+        </div>
+      </div>
+      <div id="nbThen" class="nb-then" hidden></div>
+    </div>
+    <div id="navFoot" class="glass" hidden>
+      <div class="grow">
+        <div id="nfEta" class="nf-eta"></div>
+        <div id="nfMeta" class="sub"></div>
+      </div>
+      <button id="nfVoice" class="btn ghost round" aria-label="เสียงนำทาง" data-i="vol"></button>
+      <button id="nfStop" class="btn danger round" aria-label="หยุดนำทาง" data-i="close"></button>
+    </div>
+    <div id="speed" class="glass" hidden><b>0</b><small>กม./ชม.</small></div>
+
+    <div class="fabs">
+      <button id="recenter" class="btn glass round autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
+    </div>
   </section>
 
-  <div id="divider" role="separator" aria-label="ปรับขนาด"><span></span></div>
+  <div id="divider" role="separator" aria-label="ลากเพื่อปรับขนาด"><i></i></div>
 
-  <section id="paneB" class="pane">
-    <header class="bar">
-      <form id="urlForm" class="grow">
-        <input id="urlQ" type="text" placeholder="วางลิงก์ YouTube หรือ URL เว็บ" inputmode="url" autocapitalize="off" autocomplete="off">
-        <button>เปิด</button>
+  <!-- ===== Media ===== -->
+  <section id="mediaPane" class="pane">
+    <div id="home" class="view">
+      <div class="home-grid" id="tiles"></div>
+    </div>
+
+    <div id="yt" class="view" hidden>
+      <div class="reveal"></div>
+      <form id="ytForm" class="topbar autohide" autocomplete="off">
+        <button type="button" class="btn ghost round homeBtn" aria-label="แอปทั้งหมด" data-i="apps"></button>
+        <div class="glass pill grow">
+          <span class="ic" data-i="search"></span>
+          <input id="ytQ" type="search" placeholder="ค้นหา YouTube หรือวางลิงก์" enterkeyhint="search" aria-label="ค้นหา YouTube">
+        </div>
+        <button type="button" id="ytListBtn" class="btn ghost round" aria-label="รายการวิดีโอ" data-i="list" hidden></button>
       </form>
-      <button class="icon" id="popout" title="เปิดในหน้าต่างใหม่">↗</button>
-      <button class="icon" data-max="paneB" title="เต็มจอ">⛶</button>
-    </header>
-    <div id="appView">
-      <iframe id="appFrame" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen title="App"></iframe>
-      <div id="notice" hidden></div>
+      <div id="ytStage" hidden>
+        <div id="ytHost"></div>
+        <div id="ytErr" class="overlay" hidden>
+          <p id="ytErrMsg"></p>
+          <div class="row">
+            <button id="ytErrOpen" class="btn primary"><span class="ic" data-i="open"></span>เปิดใน YouTube</button>
+            <button id="ytErrNext" class="btn">ถัดไป</button>
+          </div>
+        </div>
+      </div>
+      <div id="ytList" class="vlist"></div>
+    </div>
+
+    <div id="web" class="view" hidden>
+      <div class="reveal"></div>
+      <form id="webForm" class="topbar autohide" autocomplete="off">
+        <button type="button" class="btn ghost round homeBtn" aria-label="แอปทั้งหมด" data-i="apps"></button>
+        <div class="glass pill grow">
+          <span class="ic" data-i="globe"></span>
+          <input id="webQ" type="text" inputmode="url" autocapitalize="off" placeholder="พิมพ์ URL" aria-label="URL">
+        </div>
+        <button type="button" id="webPop" class="btn ghost round" aria-label="เปิดในหน้าต่างใหม่" data-i="open"></button>
+      </form>
+      <iframe id="webFrame" title="เว็บ" allow="autoplay; fullscreen; picture-in-picture; encrypted-media"></iframe>
     </div>
   </section>
 </div>
 
-<nav id="dock">
-  <div id="apps"></div>
-  <div class="tools">
-    <button id="swap" title="สลับฝั่ง">⇄</button>
-    <button id="layout" title="สลับแนวตั้ง/แนวนอน">▥</button>
-    <button id="ratio" title="สัดส่วนจอ">50/50</button>
-    <button id="install" title="ติดตั้งแอป" hidden>⬇ ติดตั้ง</button>
-    <button id="fs" title="เต็มจอทั้งเครื่อง">⤢</button>
+<!-- ===== Floating controls ===== -->
+<div id="dock">
+  <div id="dockBar" class="glass" hidden>
+    <div class="seg" role="group" aria-label="มุมมอง">
+      <button data-mode="map" aria-label="แผนที่เต็มจอ" data-i="map"></button>
+      <button data-mode="split" aria-label="แบ่งจอ" data-i="split"></button>
+      <button data-mode="media" aria-label="แอปเต็มจอ" data-i="play"></button>
+    </div>
+    <button id="swap" class="btn ghost round" aria-label="สลับฝั่ง" data-i="swap"></button>
+    <button id="orient" class="btn ghost round" aria-label="แนวตั้ง/แนวนอน" data-i="split"></button>
+    <button id="fs" class="btn ghost round" aria-label="เต็มจอ" data-i="fs"></button>
+    <button id="install" class="btn ghost round" aria-label="ติดตั้งแอป" data-i="dl" hidden></button>
+    <button id="settingsBtn" class="btn ghost round" aria-label="ตั้งค่า" data-i="tune"></button>
   </div>
-</nav>
+  <button id="dockToggle" class="glass" aria-label="เมนู" data-i="more"></button>
+</div>
+
+<div id="sheetWrap" hidden>
+  <div id="sheet" class="glass card" role="dialog" aria-modal="true"></div>
+</div>
+<div id="toast" role="status" hidden></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
