@@ -704,22 +704,50 @@ function showView(v) {
   ['home', 'yt', 'web'].forEach(id => $('#' + id).hidden = id !== v);
   st.lastView = v; save();
   if (v === 'yt') ytShowIdle();
-  if (v === 'web' && !$('#webFrame').getAttribute('src')) setTimeout(() => $('#webQ').focus(), 50);
+  if (v === 'web' && !$('#webFrame').getAttribute('src') && $('#webMsg').hidden) { webHome(); setTimeout(() => $('#webQ').focus(), 50); }
   if (v !== 'yt') { yt.player?.pauseVideo?.(); setTheater(false); }
 }
 $$('.homeBtn').forEach(b => b.onclick = () => showView('home'));
 
 // ---------- Web view ----------
-function loadWeb(url) {
-  if (!url) return;
-  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-  const v = ytParse(url);
+// Sites known to refuse being shown inside another page (X-Frame-Options / CSP frame-ancestors).
+// Showing them would only give a blank pane, so offer to open them in Chrome straight away.
+const NO_FRAME = /(^|\.)(facebook|instagram|threads|tiktok|twitter|x|netflix|spotify|line|linkedin|reddit|github|amazon|shopee|lazada|discord|whatsapp|chatgpt|openai|claude|pantip|apple|microsoft|live|office|bing|duckduckgo|yahoo)\.[a-z.]+$|^(mail|drive|docs|news|maps)\.google\.|^(www\.)?google\.[a-z.]+$/i;
+// Google search pages may be shown inside other pages when they carry igu=1
+const googleSearch = q => 'https://www.google.com/search?igu=1&q=' + encodeURIComponent(q);
+function webMsg(html) { const m = $('#webMsg'); m.hidden = !html; m.innerHTML = html || ''; paintIcons(m); }
+function loadWeb(input) {
+  input = (input || '').trim(); if (!input) return;
+  const v = ytParse(input);
   if (v) { showView('yt'); return ytPlayParsed(v); }
-  $('#webQ').value = url; $('#webFrame').src = url; $('#webQ').blur();
-  toast('ถ้าหน้าว่าง แปลว่าเว็บนี้ไม่ยอมแสดงในจอแบ่ง กด ↗ เพื่อเปิดแยก', 5000);
+  // words rather than an address: search Google inside the pane
+  const looksLikeUrl = /^https?:\/\//i.test(input) || (/^[^\s]+\.[a-z]{2,}(\/|$|\?|:)/i.test(input) && !/\s/.test(input));
+  const url = looksLikeUrl ? (/^https?:\/\//i.test(input) ? input : 'https://' + input) : googleSearch(input);
+  let host = ''; try { host = new URL(url).hostname; } catch {}
+  $('#webQ').value = looksLikeUrl ? url : input; $('#webQ').blur();
+  if (NO_FRAME.test(host) && !/[?&]igu=1/.test(url)) {
+    $('#webFrame').removeAttribute('src'); $('#webFrame').dataset.url = url;
+    $('#toast').hidden = true;
+    webMsg(`<h3>${esc(host.replace(/^www\./, ''))} ไม่ยอมแสดงในจอแบ่ง</h3>
+      <div class="sub">เว็บนี้ตั้งค่าห้ามแสดงผลอยู่ในเว็บอื่น เบราว์เซอร์ทุกตัวจึงแสดงในฝั่งนี้ไม่ได้</div>
+      <div class="row"><button class="btn primary" id="webOpen"><span class="ic" data-i="open"></span>เปิดใน Chrome</button></div>
+      <div class="sub">ดูคู่กับแผนที่บน Android: ใช้ “แยกหน้าจอ” ของระบบกับ Chrome แล้วตั้ง Car Screen เป็น “แผนที่เต็มจอ”</div>`);
+    $('#webOpen').onclick = () => openWeb(url);
+    return;
+  }
+  webMsg('');
+  $('#webFrame').src = url; $('#webFrame').dataset.url = url;
+  toast('ถ้าหน้าว่าง แปลว่าเว็บนี้ไม่ยอมแสดงในจอแบ่ง กด ↗ เพื่อเปิดใน Chrome', 5000);
 }
+function webHome() {
+  webMsg(`<h3>เปิดเว็บในจอแบ่ง</h3>
+    <div class="sub">พิมพ์ที่อยู่เว็บ หรือพิมพ์คำค้นหาเพื่อค้นใน Google ได้เลย</div>
+    <div class="row"><button class="btn" data-web="https://www.google.com/search?igu=1">Google</button><button class="btn" data-web="https://th.m.wikipedia.org">Wikipedia</button></div>
+    <div class="sub">เว็บใหญ่หลายแห่ง (Facebook, TikTok, Netflix, Shopee ฯลฯ) ไม่ยอมแสดงในเว็บอื่น จะเปิดใน Chrome แทน</div>`);
+}
+$('#webMsg').addEventListener('click', e => { const b = e.target.closest('[data-web]'); if (b) loadWeb(b.dataset.web); });
 $('#webForm').onsubmit = e => { e.preventDefault(); loadWeb($('#webQ').value.trim()); };
-$('#webPop').onclick = () => { const u = $('#webFrame').getAttribute('src') || $('#webQ').value.trim(); if (u) openExternal(u); };
+$('#webPop').onclick = () => { const u = $('#webFrame').dataset.url || $('#webQ').value.trim(); if (u) openWeb(/^https?:/i.test(u) ? u : googleSearch(u)); };
 
 // ===================================================================
 // YouTube
@@ -1143,5 +1171,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, yt, instr, setRoute, webUrl, isoSecs, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, yt, instr, setRoute, webUrl, NO_FRAME, isoSecs, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

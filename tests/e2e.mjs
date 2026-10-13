@@ -503,6 +503,23 @@ console.log('Apps');
     await page.fill('#webQ', 'youtube.com/watch?v=dQw4w9WgXcQ'); await page.press('#webQ', 'Enter');
     assert.ok(await vis(page, '#yt'));
   });
+  await test('web view: words search Google inside the pane', async () => {
+    await page.click('#yt .homeBtn'); await page.click('.tile:has-text("เว็บ")');
+    await page.fill('#webQ', 'ร้านกาแฟ ใกล้ฉัน'); await page.press('#webQ', 'Enter');
+    assert.equal(await page.getAttribute('#webFrame', 'src'), 'https://www.google.com/search?igu=1&q=' + encodeURIComponent('ร้านกาแฟ ใกล้ฉัน'));
+    assert.equal(await vis(page, '#webMsg'), false);
+  });
+  await test('web view: sites that refuse split screen get an open-in-Chrome card, not a blank pane', async () => {
+    await page.fill('#webQ', 'facebook.com'); await page.press('#webQ', 'Enter');
+    assert.ok(await vis(page, '#webMsg'));
+    assert.match(await page.textContent('#webMsg'), /facebook\.com ไม่ยอมแสดงในจอแบ่ง/);
+    assert.equal(await page.getAttribute('#webFrame', 'src'), null);
+    await shot(page, '10-web-blocked');
+    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#webOpen')]);
+    assert.match(pop.url(), /facebook\.com/); await pop.close();
+    const r = await page.evaluate(() => ['m.facebook.com', 'www.tiktok.com', 'shopee.co.th', 'www.google.com', 'th.m.wikipedia.org', 'www.sanook.com', 'online.example.com'].map(h => __car.NO_FRAME.test(h)));
+    assert.deepEqual(r, [true, true, true, true, false, false, false]);
+  });
   await test('PWA: manifest valid and service worker active', async () => {
     const m = await (await page.request.get(BASE + 'manifest.webmanifest')).json();
     assert.equal(m.id, './?app=car-screen-2', 'new app id so a broken old install does not block a fresh one');

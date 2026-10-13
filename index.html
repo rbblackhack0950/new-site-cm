@@ -108,11 +108,12 @@
         <button type="button" class="btn ghost round homeBtn" aria-label="แอปทั้งหมด" data-i="apps"></button>
         <div class="glass pill grow">
           <span class="ic" data-i="globe"></span>
-          <input id="webQ" type="text" inputmode="url" autocapitalize="off" placeholder="พิมพ์ URL" aria-label="URL">
+          <input id="webQ" type="text" inputmode="url" autocapitalize="off" placeholder="พิมพ์ URL หรือคำค้นหา" aria-label="URL หรือคำค้นหา" enterkeyhint="go">
         </div>
         <button type="button" id="webPop" class="btn ghost round" aria-label="เปิดในหน้าต่างใหม่" data-i="open"></button>
       </form>
       <iframe id="webFrame" title="เว็บ" allow="autoplay; picture-in-picture; encrypted-media"></iframe>
+      <div id="webMsg" class="overlay web-msg" hidden></div>
     </div>
   </section>
 </div>
