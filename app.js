@@ -407,8 +407,21 @@ $('#search').onsubmit = async e => {
   }
   resEl._items = items.slice(0, 15);
   showResults(resEl._items.map((it, i) =>
-    `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
+    `<button class="ritem" data-res="${i}"><span class="ic" data-i="place"></span><div class="grow"><div class="title">${esc(it.name)}</div><div class="sub title">${it.src === 'longdo' ? '<span class="src">Longdo</span> ' : ''}${esc(it.sub)}</div></div>${it.d != null ? `<span class="dist">${fmtDist(it.d)}</span>` : ''}</button>`).join(''));
 };
+// Settings → ทดสอบ: one real Longdo search, reporting what went wrong in plain words
+async function testLongdo(key) {
+  const keep = st.longdoKey; st.longdoKey = key;
+  try {
+    const c = here.ll || [13.7563, 100.5018];
+    const r = await searchLongdo('เซ็นทรัล', c);
+    return r.length ? `ใช้ได้ เจอ ${r.length} สถานที่จาก Longdo` : 'เชื่อมต่อได้ แต่ไม่ได้ผลลัพธ์ ตรวจสอบว่า key ถูกต้อง';
+  } catch (e) {
+    const m = String(e?.message || e);
+    return /401|403/.test(m) ? 'Longdo ปฏิเสธ key นี้ ตรวจสอบรหัส และโดเมน ' + location.hostname + ' ที่ลงทะเบียนไว้'
+      : 'เชื่อมต่อ Longdo ไม่ได้ (' + m + ')';
+  } finally { st.longdoKey = keep; }
+}
 async function openGmapsLink(q) {
   qEl.blur();
   const url = /^https?:/i.test(q) ? q : 'https://' + q;
@@ -1264,6 +1277,7 @@ async function repairApp() {
 function settingsSheet() {
   openSheet(`<h2>ตั้งค่า</h2>
     <label>Longdo Map key (ไม่บังคับ ช่วยให้หาสถานที่ในไทยเจอมากขึ้น)<input type="text" id="sLongdo" value="${esc(st.longdoKey)}" placeholder="รหัส 32 ตัวอักษร" autocapitalize="off" autocomplete="off"></label>
+    <div class="row" style="justify-content:flex-start"><button class="btn" id="sLongdoTest">ทดสอบ key</button><span class="sub" id="sLongdoRes"></span></div>
     <div class="sub">ขอฟรีที่ map.longdo.com → เข้าสู่ระบบ → My Longdo Map → Longdo Map API → ใส่โดเมน <b>${esc(location.hostname)}</b></div>
     <label class="switch">เสียงนำทาง<input type="checkbox" id="sVoice" ${st.voice ? 'checked' : ''}></label>
     ${native?.mapsAdjacent ? `<label class="switch">ปุ่ม “เริ่มนำทาง” ใช้ Google Maps (เปิดแยกจอข้างๆ)<input type="checkbox" id="sGnav" ${st.navGoogle ? 'checked' : ''}></label>` : ''}
@@ -1276,6 +1290,11 @@ function settingsSheet() {
     <div class="sub">แอปที่ติดตั้งเปิดไม่ขึ้นหรือไม่อัปเดต: กด “ซ่อมแอป” เพื่อล้างแคชแล้วโหลดใหม่ (การตั้งค่าและประวัติยังอยู่)</div>
     <div class="row"><button class="btn" id="sRepair">ซ่อมแอป</button><button class="btn" id="sReset">รีเซ็ตหน้าจอ</button><button class="btn primary" id="sSave">บันทึก</button></div>`, s => {
     s.querySelector('#sRepair').onclick = repairApp;
+    s.querySelector('#sLongdoTest').onclick = async () => {
+      const k = s.querySelector('#sLongdo').value.trim(), out = s.querySelector('#sLongdoRes');
+      if (!k) { out.textContent = 'ใส่ key ก่อน'; return; }
+      out.textContent = 'กำลังทดสอบ…'; out.textContent = await testLongdo(k);
+    };
     s.querySelector('#sSave').onclick = () => {
       st.voice = s.querySelector('#sVoice').checked; st.autoNext = s.querySelector('#sNext').checked; st.ytKey = s.querySelector('#sKey').value.trim();
       st.longdoKey = s.querySelector('#sLongdo').value.trim();

@@ -68,6 +68,7 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .list .label{padding:8px 10px 4px;font-size:12px;letter-spacing:.06em;color:var(--mute)}
 .ritem{display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:10px;border-radius:14px}
 .ritem:active{background:var(--glass-hi)}
+.ritem .src{display:inline-block;padding:0 6px;border-radius:6px;background:rgba(91,157,255,.18);color:var(--accent);font-size:11px;font-weight:600}
 .ritem .dist{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
 .ritem .ic{color:var(--mute)}
 #routeCard{position:absolute;z-index:500;left:12px;right:12px;bottom:12px;max-width:440px;display:flex;flex-direction:column;gap:12px}

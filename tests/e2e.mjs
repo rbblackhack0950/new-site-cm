@@ -350,11 +350,15 @@ console.log('Navigation');
   await test('Longdo Map key adds Thai places, merged with OSM without duplicates', async () => {
     await page.click('#rcClose').catch(() => {});
     await page.click('#dockToggle'); await page.click('#settingsBtn');
-    await page.fill('#sLongdo', 'abc123'); await page.click('#sSave');
+    await page.fill('#sLongdo', 'abc123');
+    await page.click('#sLongdoTest');
+    await page.waitForFunction(() => /ใช้ได้ เจอ 2 สถานที่/.test(document.querySelector('#sLongdoRes').textContent));
+    await page.click('#sSave');
     await page.mouse.click(600, 600);
     await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
     await page.waitForSelector('#results .ritem:has-text("ร้านกาแฟลับ")');
     assert.equal(await page.locator('#results .ritem:has-text("เซ็นทรัลเวิลด์")').count(), 1, 'same place from both sources listed once');
+    assert.ok(await page.locator('#results .ritem:has-text("ร้านกาแฟลับ") .src').count(), 'Longdo results are labelled');
     const order = await page.$$eval('#results .ritem .dist', els => els.map(e => /กม/.test(e.textContent) ? parseFloat(e.textContent) * 1000 : parseFloat(e.textContent)));
     assert.deepEqual(order, [...order].sort((a, b) => a - b), 'nearest first');
     await page.keyboard.press('Escape'); await page.mouse.click(600, 600);
