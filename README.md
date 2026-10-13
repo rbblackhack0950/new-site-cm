@@ -23,3 +23,9 @@ SHOTS=out npm test       # บันทึกภาพหน้าจอ
 android/build-apk.sh     # build APK โดยไม่ต้องมี Android SDK หรือ Gradle → dist/car-screen.apk
 ```
 กุญแจเซ็นแอป (`android/carscreen.keystore`) เปิดเผยใน repo เพื่อให้ APK ใหม่ติดตั้งทับตัวเก่าได้ ใช้สำหรับติดตั้งเองเท่านั้น
+
+## ข้อมูลที่ชาร์จ
+
+- สถานีชาร์จเร็ว DC กว่า 3,000 แห่งมาจากแผนที่ "DC EV Charging Station Thailand" ของ ปิยเมษฐ์ วิษณุเวช (ฝังไว้ใน `data/dc-stations.json` ใช้ได้แม้ไม่มีเน็ต)
+- แปลงข้อมูลใหม่ด้วย `tools/kml-to-json.py doc.kml data/dc-stations.json`
+- รวมกับ OpenStreetMap (หัวชาร์จ AC และสถานีใหม่) โดยตัดสถานีซ้ำที่อยู่ห่างกันไม่เกิน 80 ม.

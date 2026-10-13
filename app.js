@@ -678,11 +678,8 @@ async function loadEv() {
     const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
     q = `[out:json][timeout:25];nwr["amenity"="charging_station"](around:15000,${c[0]},${c[1]});out center tags 150;`;
   }
-  try {
-    const j = await overpass(q);
-    if (seq !== ev.seq) return;
-    const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
-    let list = j.elements.map(parseStation).filter(s => s.lat != null);
+  const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
+  const keep = list => {
     if (ev.where === 'route') {
       list = list.map(s => ({ ...s, ...nearRoute([s.lat, s.lng]) })).filter(s => s.d <= 3000 && (!nav.active || s.along > progAlong));
       list.sort((a, b) => a.along - b.along);
@@ -690,11 +687,35 @@ async function loadEv() {
       list.forEach(s => s.dist = haversine(c, [s.lat, s.lng]));
       list.sort((a, b) => a.dist - b.dist);
     }
-    ev.all = list.slice(0, 60);
+    return list;
+  };
+  // bundled DC list shows at once (works offline); OpenStreetMap adds AC chargers and anything newer when it answers
+  const osmReq = overpass(q).then(j => j.elements.map(parseStation).filter(s => s.lat != null), () => null);
+  const local = await loadDc();
+  if (seq !== ev.seq) return;
+  let box = null;
+  if (ev.where === 'route') { const lats = nav.line.map(p => p[0]), lngs = nav.line.map(p => p[1]); box = [Math.min(...lats) - .03, Math.min(...lngs) - .03, Math.max(...lats) + .03, Math.max(...lngs) + .03]; }
+  const dLat = 15000 / 111000, dLng = 15000 / (111000 * Math.cos(c[0] * Math.PI / 180));
+  const near = local.filter(s => box ? s.lat >= box[0] && s.lat <= box[2] && s.lng >= box[1] && s.lng <= box[3] : Math.abs(s.lat - c[0]) <= dLat && Math.abs(s.lng - c[1]) <= dLng);
+  const build = osm => {
+    // an OpenStreetMap entry within 80 m of a bundled one is the same place
+    const extra = (osm || []).filter(o => !near.some(l => Math.abs(l.lat - o.lat) < .0008 && Math.abs(l.lng - o.lng) < .0008 && haversine([l.lat, l.lng], [o.lat, o.lng]) < 80));
+    ev.all = keep(near.concat(extra)).slice(0, 60);
     renderEv();
-  } catch {
-    if (seq === ev.seq) $('#evList').innerHTML = '<div class="muted center">หาที่ชาร์จไม่ได้ ตรวจสอบอินเทอร์เน็ต หรือค้นใน Google Maps</div>';
-  }
+  };
+  if (local.length) build(null);
+  const osm = await osmReq;
+  if (seq !== ev.seq) return;
+  if (!local.length && !osm) { $('#evList').innerHTML = '<div class="muted center">หาที่ชาร์จไม่ได้ ตรวจสอบอินเทอร์เน็ต หรือค้นใน Google Maps</div>'; return; }
+  if (osm) build(osm);
+}
+let dcPromise;
+// DC stations compiled by Piyamate Wisanuvej (data/dc-stations.json, built with tools/kml-to-json.py)
+function loadDc() {
+  return dcPromise || (dcPromise = fetch('data/dc-stations.json').then(r => r.ok ? r.json() : Promise.reject()).then(j => j.s.map((r, i) => ({
+    id: 'L' + i, lat: r[0], lng: r[1], name: r[2] || r[3] || 'สถานีชาร์จ', op: r[4] || '',
+    sockets: r[5].map(k => ({ label: k[0], dc: !!k[2], kw: k[1] || null })).concat(r[5].length ? [] : [{ label: 'DC', dc: true, kw: null }]), dc: true
+  }))).catch(() => { dcPromise = null; return []; }));
 }
 function renderEv() {
   const list = ev.all.filter(s => !ev.dc || s.dc);
@@ -703,23 +724,6 @@ function renderEv() {
     const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin${s.dc ? ' dc' : ''}">${svg('bolt')}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(map);
     m.on('click', () => selectEv(s.id, true)); ev.markers.push(m);
   });
-  // show the nearest stations (and the car) beside the list
-  if (map && list.length && !ev.fitted) {
-    ev.fitted = true;
-    // nearby ones only, so one far-away station does not zoom the map out
-    const key = s => ev.where === 'route' ? s.d : s.dist, near = Math.max(3000, key(list[0]) * 3);
-    const pts = list.filter(s => key(s) <= near).slice(0, 6).map(s => [s.lat, s.lng]).concat(here.ll ? [here.ll] : []);
-    const card = $('#evCard').getBoundingClientRect(), m = $('#map').getBoundingClientRect();
-    const beside = card.width < m.width * .6; // wide map: keep pins right of the panel; narrow: above it
-    setFollow(false);
-    whenMapIdle(() => {
-      map.stop(); // an unfinished follow-the-car pan would otherwise undo the fit
-      map.fitBounds(L_.latLngBounds(pts), {
-        paddingTopLeft: [beside ? card.right - m.left + 30 : 30, 40],
-        paddingBottomRight: [40, beside ? 40 : m.bottom - card.top + 30], maxZoom: 16, animate: false
-      });
-    });
-  }
   const canStop = !!nav.dest;
   $('#evList').innerHTML = list.length ? list.map(s => {
     const where = ev.where === 'route'
@@ -730,7 +734,24 @@ function renderEv() {
       <div class="grow"><div class="t ellipsis">${esc(s.name)}</div><div class="muted ellipsis">${esc([s.op !== s.name ? s.op : '', where].filter(Boolean).join(' · '))}</div><div class="chips">${chips}</div></div>
       ${canStop ? `<button class="btn primary" data-evstop="${esc(s.id)}">แวะ</button>` : `<button class="btn primary" data-evgo="${esc(s.id)}">ไปที่นี่</button>`}
     </div>`;
-  }).join('') : `<div class="muted center">ไม่พบที่ชาร์จ${ev.dc ? 'แบบ DC' : ''}${ev.where === 'route' ? 'ใกล้เส้นทาง' : 'ในรัศมี 15 กม.'} ข้อมูลจาก OpenStreetMap อาจไม่ครบ ลองค้นใน Google Maps</div>`;
+  }).join('') : `<div class="muted center">ไม่พบที่ชาร์จ${ev.dc ? 'แบบ DC' : ''}${ev.where === 'route' ? 'ใกล้เส้นทาง' : 'ในรัศมี 15 กม.'} ข้อมูลอาจไม่ครบ ลองค้นใน Google Maps</div>`;
+  // show the nearest stations (and the car) beside the list
+  if (map && list.length && !ev.fitted) {
+    ev.fitted = true;
+    // nearby ones only, so one far-away station does not zoom the map out
+    const key = s => ev.where === 'route' ? s.d : s.dist, near = Math.max(3000, key(list[0]) * 3);
+    const pts = list.filter(s => key(s) <= near).slice(0, 6).map(s => [s.lat, s.lng]).concat(here.ll ? [here.ll] : []);
+    setFollow(false);
+    whenMapIdle(() => {
+      map.stop(); // an unfinished follow-the-car pan would otherwise undo the fit
+      const card = $('#evCard').getBoundingClientRect(), m = $('#map').getBoundingClientRect();
+      const beside = card.width < m.width * .6; // wide map: keep pins right of the panel; narrow: above it
+      map.fitBounds(L_.latLngBounds(pts), {
+        paddingTopLeft: [beside ? card.right - m.left + 30 : 30, 40],
+        paddingBottomRight: [40, beside ? 40 : m.bottom - card.top + 30], maxZoom: 16, animate: false
+      });
+    });
+  }
 }
 function selectEv(id, scroll) {
   ev.sel = id;

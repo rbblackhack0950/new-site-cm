@@ -46,6 +46,11 @@ const STATIONS = { elements: [
   { type: 'way', id: 2, center: { lat: 13.7490, lon: 100.5402 }, tags: { amenity: 'charging_station', name: 'EA Anywhere', 'socket:type2': '4', 'socket:type2:output': '22 kW' } },
   { type: 'node', id: 3, lat: 13.9000, lon: 100.7000, tags: { amenity: 'charging_station', name: 'Far Station', 'socket:type2_combo': '1' } }
 ] };
+// bundled DC list: the same PEA station as OpenStreetMap's (must not show twice) and one only this list knows
+const DC = { s: [
+  [13.75005, 100.53402, 'PEA VOLTA สามย่าน', '', 'PEA', [['CCS2', 120, 1], ['Type 2', 0, 0]]],
+  [13.7440, 100.5330, 'Local DC', 'Local DC', 'PTT', [['CCS2', 150, 1]]]
+] };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const PLACE_URL = 'https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.756!4d100.54';
 
@@ -108,6 +113,8 @@ async function newPage(viewport, { app = 21, ...extra } = {}) {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  // the service worker would answer this file itself, bypassing ctx.route, so swap it in at fetch()
+  await ctx.addInitScript(dc => { const f = window.fetch; window.fetch = (u, o) => /dc-stations\.json/.test(String(u)) ? Promise.resolve(new Response(JSON.stringify(dc), { headers: { 'content-type': 'application/json' } })) : f.call(window, u, o); }, DC);
   await ctx.route(/^https?:\/\/(?!localhost)/, route => {
     const u = route.request().url(); const hit = k => (counts[k] = (counts[k] || 0) + 1);
     const json = b => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
@@ -398,25 +405,34 @@ console.log('Charging & stops');
   await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
   await test('⚡ near me: stations nearest first, with plugs and power; second server used when the first is busy', async () => {
     await page.click('#evBtn');
-    await page.waitForSelector('.ev-item');
-    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'EA Anywhere', 'Far Station']);
-    assert.match(await page.textContent('.ev-item >> nth=0'), /CCS2 120 kW.*Type 2/s);
+    await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 4); // bundled list first, OpenStreetMap joins
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['Local DC', 'PEA VOLTA สามย่าน', 'EA Anywhere', 'Far Station'], 'bundled + OpenStreetMap, the duplicate once');
+    assert.match(await page.textContent('.ev-item >> nth=1'), /CCS2 120 kW.*Type 2/s);
     assert.match(counts.overpassQ.at(-1), /around:15000,13\.746,100\.534/);
     assert.ok(counts.overpass0 >= 1 && counts.overpass1 >= 1);
-    assert.equal(await page.locator('.ev-pin').count(), 3, 'pins on the map');
+    assert.equal(await page.locator('.ev-pin').count(), 4, 'pins on the map');
     await page.waitForTimeout(400);
     const card = await box(page, '#evCard'), mapBox = await box(page, '#map');
     for (const i of [0, 1]) { // the two nearby stations are in view and not under the panel
       const p = await page.locator('.ev-pin').nth(i).boundingBox();
       const inMap = p.x > mapBox.x && p.x + p.width < mapBox.x + mapBox.width && p.y > mapBox.y && p.y + p.height < mapBox.y + mapBox.height;
       const clear = p.x > card.x + card.width || p.y + p.height < card.y;
-      assert.ok(inMap && clear, `pin ${i} visible at ${p.x},${p.y}`);
+      assert.ok(inMap && clear, `pin ${i} visible at ${p.x},${p.y} card ${JSON.stringify(card)} map ${JSON.stringify(mapBox)}`);
     }
     await shot(page, '10-ev-near');
   });
+  await test('bundled list works when OpenStreetMap is down', async () => {
+    await page.evaluate(() => { window.__fetch = window.fetch; window.fetch = (u, o) => /overpass/.test(u) ? Promise.reject(new Error('down')) : window.__fetch(u, o); });
+    await page.click('#evX'); await page.click('#evBtn');
+    await page.waitForSelector('.ev-item');
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['Local DC', 'PEA VOLTA สามย่าน']);
+    await page.evaluate(() => { window.fetch = window.__fetch; });
+    await page.click('#evX'); await page.click('#evBtn');
+    await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 4);
+  });
   await test('fast DC filter', async () => {
     await page.click('#evDc');
-    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'Far Station']);
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['Local DC', 'PEA VOLTA สามย่าน', 'Far Station']);
     await page.click('#evDc');
   });
   await test('ไปที่นี่ on a station sets it as the destination', async () => {
@@ -430,8 +446,8 @@ console.log('Charging & stops');
     await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
     await page.click('#evBtn');
     await page.waitForSelector('#evWhere [data-where="route"].on');
-    await page.waitForSelector('.ev-item');
-    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['PEA VOLTA สามย่าน', 'EA Anywhere']);
+    await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 3);
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['Local DC', 'PEA VOLTA สามย่าน', 'EA Anywhere']);
     assert.match(await page.textContent('.ev-item >> nth=0'), /ห่างเส้นทาง/);
     await page.click('.ev-item:has-text("PEA") [data-evstop]');
     await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
