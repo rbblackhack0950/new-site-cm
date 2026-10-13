@@ -121,10 +121,11 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .topbar .pill{height:44px}
 .reveal{position:absolute;z-index:4;top:0;left:0;right:0;height:28px;display:none}
 body.idle .reveal{display:block}
-/* video fills its own pane only; the bar peeks in when the top edge is tapped */
-#yt.theater .reveal{display:block}
-#yt.theater .topbar{opacity:0;pointer-events:none;transform:translateY(-8px)}
-#yt.theater.peek .topbar{opacity:1;pointer-events:auto;transform:none}
+/* playing: the bar sits above the player, never on it; theater: video fills its pane, bar removed */
+#yt.playing .topbar{position:relative;background:none;flex:none}
+body.idle #yt.playing .topbar{opacity:1;pointer-events:auto;transform:none}
+#yt.playing .reveal{display:none}
+#yt.theater .topbar{display:none}
 #yt.theater .vlist{display:none!important}
 #yt.theater #ytStage{flex:1 1 auto!important;aspect-ratio:auto!important;max-height:none!important}
 #ytStage{position:relative;flex:1;min-height:0;background:#000;margin-top:64px}

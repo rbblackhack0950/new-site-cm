@@ -705,7 +705,7 @@ function showView(v) {
   st.lastView = v; save();
   if (v === 'yt') ytShowIdle();
   if (v === 'web' && !$('#webFrame').getAttribute('src')) setTimeout(() => $('#webQ').focus(), 50);
-  if (v !== 'yt') yt.player?.pauseVideo?.();
+  if (v !== 'yt') { yt.player?.pauseVideo?.(); setTheater(false); }
 }
 $$('.homeBtn').forEach(b => b.onclick = () => showView('home'));
 
@@ -847,17 +847,14 @@ $('#ytList').addEventListener('click', e => {
 $('#ytQ').addEventListener('input', () => { if (!$('#ytQ').value && !yt.cur) { $('#ytList')._items = []; ytTab(yt.tab || 'recent'); } });
 function openList(on) { $('#yt').classList.toggle('list-open', on); }
 $('#ytListBtn').onclick = () => openList(!$('#yt').classList.contains('list-open'));
+// video fills its own pane; the way back is in the ⋯ menu on the divider so nothing covers the player
 function setTheater(on) {
-  const v = $('#yt'); v.classList.toggle('theater', on); v.classList.remove('peek');
-  setIcon($('#ytFs'), on ? 'fsx' : 'fs');
+  $('#yt').classList.toggle('theater', on);
+  $('#ytFsExit').hidden = !on;
+  if (on) toast('ออกจากเต็มจอ: แตะ ⋯ ที่แถบกลาง', 2500);
 }
-$('#ytFs').onclick = () => setTheater(!$('#yt').classList.contains('theater'));
-let peekT;
-$('#yt .reveal').addEventListener('pointerdown', () => {
-  if (!$('#yt').classList.contains('theater')) return;
-  $('#yt').classList.add('peek'); clearTimeout(peekT);
-  peekT = setTimeout(() => $('#yt').classList.remove('peek'), 4000);
-});
+$('#ytFs').onclick = () => setTheater(true);
+$('#ytFsExit').onclick = () => { setTheater(false); $('#dockBar').hidden = true; };
 
 function loadYTApi() {
   if (yt.apiReady) return yt.apiReady;
@@ -1037,13 +1034,22 @@ function accountSheet() {
 // ===================================================================
 // Settings & install
 // ===================================================================
+// drop every service worker and cache, then reload from the network
+async function repairApp() {
+  toast('กำลังซ่อมแอป…');
+  try { for (const r of await navigator.serviceWorker?.getRegistrations?.() || []) await r.unregister(); } catch {}
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch {}
+  location.replace(location.pathname + '?repaired=' + Date.now());
+}
 function settingsSheet() {
   openSheet(`<h2>ตั้งค่า</h2>
     <label class="switch">เสียงนำทาง<input type="checkbox" id="sVoice" ${st.voice ? 'checked' : ''}></label>
     <label class="switch">เล่นวิดีโอถัดไปอัตโนมัติ<input type="checkbox" id="sNext" ${st.autoNext ? 'checked' : ''}></label>
     <label>YouTube API key (ไม่บังคับ ช่วยให้ค้นหาเสถียร)<input type="password" id="sKey" value="${esc(st.ytKey)}" placeholder="AIza…" autocapitalize="off" autocomplete="off"></label>
     <div class="sub">สร้างฟรีที่ Google Cloud Console → เปิด “YouTube Data API v3” → Credentials → API key</div>
-    <div class="row"><button class="btn" id="sReset">รีเซ็ตหน้าจอ</button><button class="btn primary" id="sSave">บันทึก</button></div>`, s => {
+    <div class="sub">แอปที่ติดตั้งเปิดไม่ขึ้นหรือไม่อัปเดต: กด “ซ่อมแอป” เพื่อล้างแคชแล้วโหลดใหม่ (การตั้งค่าและประวัติยังอยู่)</div>
+    <div class="row"><button class="btn" id="sRepair">ซ่อมแอป</button><button class="btn" id="sReset">รีเซ็ตหน้าจอ</button><button class="btn primary" id="sSave">บันทึก</button></div>`, s => {
+    s.querySelector('#sRepair').onclick = repairApp;
     s.querySelector('#sSave').onclick = () => {
       st.voice = s.querySelector('#sVoice').checked; st.autoNext = s.querySelector('#sNext').checked; st.ytKey = s.querySelector('#sKey').value.trim();
       save(); setVoiceIcon(); closeSheet(); toast('บันทึกแล้ว', 1500);

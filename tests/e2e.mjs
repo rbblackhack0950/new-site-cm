@@ -383,18 +383,28 @@ console.log('YouTube');
     assert.ok(await page.locator('#yt').evaluate(e => e.classList.contains('list-open')));
   });
   await shot(page, '6-yt-playing');
-  await test('fullscreen button fills only the video pane, map stays visible', async () => {
+  await test('while playing, nothing of ours sits on top of the video', async () => {
+    const form = await page.locator('#ytForm').boundingBox(), stage = await page.locator('#ytStage').boundingBox();
+    assert.ok(stage.y >= form.y + form.height - 1, `bar above player (bar ends ${form.y + form.height}, video starts ${stage.y})`);
+    await page.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 7000 });
+    const top = await page.evaluate(() => { const r = document.querySelector('#ytStage').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width - 30, r.y + 10).closest('#ytHost') !== null; });
+    assert.ok(top, 'top-right corner of the video is the video itself, even when idle');
+    await page.mouse.click(300, 400);
+  });
+  await test('fullscreen button fills only the video pane, map stays visible, nothing covers it', async () => {
     await page.click('#ytFs');
     const stage = await page.locator('#ytStage').boundingBox(), pane = await page.locator('#mediaPane').boundingBox();
     assert.ok(Math.abs(stage.height - pane.height) < 2 && Math.abs(stage.width - pane.width) < 2, 'video fills its pane');
     assert.ok(await vis(page, '#mapPane'), 'map still on screen');
-    assert.equal(await page.locator('#ytForm').evaluate(e => getComputedStyle(e).pointerEvents), 'none', 'top bar tucked away');
-    const r = await page.locator('#yt .reveal').boundingBox();
-    await page.mouse.click(r.x + r.width / 2, r.y + 5);
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('#ytForm')).opacity === '1');
+    assert.equal(await vis(page, '#ytForm'), false, 'search bar removed');
+    for (const [fx, fy] of [[.95, .03], [.5, .03], [.05, .97], [.95, .97], [.5, .5]]) {
+      const ok = await page.evaluate(([fx, fy]) => { const r = document.querySelector('#ytStage').getBoundingClientRect(); return !!document.elementFromPoint(r.x + r.width * fx, r.y + r.height * fy).closest('#ytHost'); }, [fx, fy]);
+      assert.ok(ok, `video uncovered at ${fx},${fy}`);
+    }
     await shot(page, '7-yt-pane-full');
-    await page.click('#ytFs');
+    await page.click('#dockToggle'); await page.click('#ytFsExit');
     assert.equal(await page.locator('#yt.theater').count(), 0);
+    assert.ok(await vis(page, '#ytForm'));
   });
   await test('video frames are not allowed to go fullscreen over the map', async () => {
     assert.doesNotMatch(await page.getAttribute('#webFrame', 'allow'), /fullscreen/);
@@ -467,9 +477,21 @@ console.log('Apps');
   });
   await test('PWA: manifest valid and service worker active', async () => {
     const m = await (await page.request.get(BASE + 'manifest.webmanifest')).json();
-    assert.equal(m.display, 'fullscreen'); assert.equal(m.icons.length, 2);
+    assert.equal(m.id, './?app=car-screen-2', 'new app id so a broken old install does not block a fresh one');
+    assert.equal(m.display, 'standalone'); assert.deepEqual(m.display_override, ['fullscreen', 'standalone']);
+    assert.deepEqual(m.icons.map(i => i.purpose), ['any', 'any', 'maskable', 'maskable']);
+    for (const i of m.icons) assert.equal((await page.request.get(BASE + i.src)).status(), 200);
+    assert.equal((await page.request.get(BASE + '?source=pwa')).status(), 200, 'start_url loads');
     const sw = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
     assert.match(sw, /sw\.js$/);
+  });
+  await test('repair app clears caches and reloads, keeping settings', async () => {
+    await page.evaluate(() => caches.open('junk').then(c => c.put('/x', new Response('x'))));
+    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    await Promise.all([page.waitForURL(/repaired=/), page.click('#sRepair')]);
+    await page.waitForFunction(() => window.__car);
+    assert.equal(await page.evaluate(async () => (await caches.keys()).includes('junk')), false);
+    assert.ok(await page.evaluate(() => __car.st.extSeen.includes('netflix')), 'settings kept');
   });
   await test('no console errors in apps', () => assert.deepEqual(errors, []));
   await ctx.close();
