@@ -18,10 +18,21 @@ const A = [13.7460, 100.5340], B = [13.7500, 100.5340], C = [13.7500, 100.5400],
 const geo = pts => ({ type: 'LineString', coordinates: pts.map(p => [p[1], p[0]]) });
 const ROUTE = { code: 'Ok', routes: [{ distance: 1760, duration: 300, legs: [{ steps: [
   { name: 'ถนนพญาไท', geometry: geo([A, B]), maneuver: { type: 'depart', location: [A[1], A[0]] }, distance: 445, duration: 80 },
-  { name: 'ถนนเพชรบุรี', geometry: geo([B, C]), maneuver: { type: 'turn', modifier: 'right', location: [B[1], B[0]] }, distance: 650, duration: 110 },
+  { name: 'ถนนเพชรบุรี', geometry: geo([B, C]), maneuver: { type: 'turn', modifier: 'right', location: [B[1], B[0]] }, distance: 650, duration: 110, intersections: [{ classes: ['toll', 'motorway'] }] },
   { name: 'ซอยทดสอบ', geometry: geo([C, D]), maneuver: { type: 'turn', modifier: 'left', location: [C[1], C[0]] }, distance: 665, duration: 110 },
   { name: '', geometry: geo([D, D]), maneuver: { type: 'arrive', location: [D[1], D[0]] }, distance: 0, duration: 0 }
 ] }] }] };
+// slower alternative without tolls: west, north, then east to D
+const P1 = [13.7460, 100.5300], P2 = [13.7560, 100.5300];
+const ALT = { distance: 2500, duration: 420, legs: [{ steps: [
+  { name: 'ซอยเลี่ยง', geometry: geo([A, P1]), maneuver: { type: 'depart', location: [A[1], A[0]] }, distance: 430 },
+  { name: 'ถนนบรรทัดทอง', geometry: geo([P1, P2]), maneuver: { type: 'turn', modifier: 'right', location: [P1[1], P1[0]] }, distance: 1110 },
+  { name: 'ถนนพระราม 1', geometry: geo([P2, D]), maneuver: { type: 'turn', modifier: 'right', location: [P2[1], P2[0]] }, distance: 960 },
+  { name: '', geometry: geo([D, D]), maneuver: { type: 'arrive', location: [D[1], D[0]] }, distance: 0 }
+] }] };
+const GIS_STUB = `window.google = { accounts: { oauth2: {
+  initTokenClient(o) { return { requestAccessToken() { window.__gis = (window.__gis || 0) + 1; setTimeout(() => o.callback({ access_token: 'TOK', expires_in: 3600 }), 0); } }; },
+  revoke() {} } } };`;
 const PLACES = [{ lat: String(D[0]), lon: String(D[1]), name: 'เซ็นทรัลเวิลด์', display_name: 'เซ็นทรัลเวิลด์, ถนนราชดำริ, ปทุมวัน, กรุงเทพมหานคร' }];
 const PIPED = { items: [
   { type: 'stream', url: '/watch?v=AAAAAAAAAAA', title: 'เพลงชิลขับรถ', uploaderName: 'Chill TH', duration: 3605 },
@@ -49,7 +60,7 @@ let failed = 0, passed = 0;
 const counts = {};
 async function test(name, fn) {
   try { await fn(); passed++; console.log('  ✓', name); }
-  catch (e) { failed++; if (SHOTS && globalThis.__pg) await globalThis.__pg.screenshot({ path: path.join(SHOTS, 'fail-' + name.replace(/\W+/g, '_').slice(0, 30) + '.png') }).catch(() => {}); console.log('  ✗', name, '\n    ', e.message.split('\n').filter((l, i) => i === 0 || /intercepts|not visible|not stable|outside/.test(l)).slice(0, 3).join('\n     ')); }
+  catch (e) { failed++; if (SHOTS && globalThis.__pg) await globalThis.__pg.screenshot({ path: path.join(SHOTS, 'fail-' + name.replace(/\W+/g, '_').slice(0, 30) + '.png') }).catch(() => {}); console.log('  ✗', name, '\n    ', e.message.split('\n').filter((l, i) => i < 8 || /intercepts|not visible|not stable|outside/.test(l)).slice(0, 8).join('\n     ')); }
 }
 async function newPage(viewport, extra = {}) {
   const ctx = await browser.newContext({ viewport, geolocation: { latitude: A[0], longitude: A[1], accuracy: 8 }, permissions: ['geolocation'], locale: 'th-TH', ...extra });
@@ -74,12 +85,27 @@ async function newPage(viewport, extra = {}) {
     const u = route.request().url(); const hit = k => (counts[k] = (counts[k] || 0) + 1);
     const json = b => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
     if (u.includes('tile.openstreetmap.org') || u.includes('i.ytimg.com')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
-    if (u.includes('router.project-osrm.org')) { hit('osrm'); return json(ROUTE); }
+    if (u.includes('router.project-osrm.org')) {
+      hit('osrm'); const ex = new URL(u).searchParams.get('exclude');
+      if (ex) (counts.exclude = counts.exclude || []).push(ex);
+      if (ex && ex.includes(',')) return route.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ code: 'InvalidValue' }) });
+      return json(ex === 'toll' ? { code: 'Ok', routes: [ALT] } : { code: 'Ok', routes: [ROUTE.routes[0], ALT] });
+    }
+    if (u.includes('accounts.google.com/gsi/client')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB });
     if (u.includes('nominatim.openstreetmap.org')) { hit('nominatim'); return json(PLACES); }
     if (u.includes('youtube.com/iframe_api')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: YT_STUB });
     if (u.includes('pipedapi.kavin.rocks')) { hit('piped0'); return route.fulfill({ status: 502, body: 'down' }); }
     if (u.includes('api.piped.private.coffee')) { hit('piped1'); return json(PIPED); }
-    if (u.includes('googleapis.com/youtube')) { hit('ytapi'); return json({ items: [{ id: { videoId: 'KKKKKKKKKKK' }, snippet: { title: 'From &amp; API', channelTitle: 'Ch' } }] }); }
+    if (u.includes('googleapis.com/youtube')) {
+      const auth = route.request().headers().authorization, p = new URL(u).pathname.split('/').pop();
+      if (auth) { if (auth !== 'Bearer TOK') return route.fulfill({ status: 401, body: '' }); hit('bearer'); }
+      if (p === 'search') { hit(auth ? 'ytsearchBearer' : 'ytapi'); return json({ items: [{ id: { videoId: 'KKKKKKKKKKK' }, snippet: { title: auth ? 'Signed-in result' : 'From &amp; API', channelTitle: 'Ch' } }] }); }
+      if (p === 'subscriptions') return json({ items: [{ snippet: { resourceId: { channelId: 'C1' } } }] });
+      if (p === 'channels') return json({ items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] });
+      if (p === 'playlistItems') return json({ items: [{ snippet: { title: 'New upload', channelTitle: 'Ch1' }, contentDetails: { videoId: 'SSSSSSSSSSS', videoPublishedAt: '2026-10-01T00:00:00Z' } }] });
+      if (p === 'videos') return json({ items: [{ id: 'LLLLLLLLLLL', snippet: { title: 'Liked one', channelTitle: 'X' }, contentDetails: { duration: 'PT3M5S' } }] });
+      if (p === 'playlists') return json({ items: [{ id: 'PLmine', snippet: { title: 'Road trip', thumbnails: { medium: { url: 'https://i.ytimg.com/x.jpg' } } }, contentDetails: { itemCount: 12 } }] });
+    }
     return route.fulfill({ status: 404, body: '' });
   });
   await page.goto(BASE);
@@ -109,6 +135,8 @@ console.log('Units');
       i3: instr({ name: '', maneuver: { type: 'arrive' } }),
       i4: instr({ name: '', maneuver: { type: 'fork', modifier: 'slight right' } }),
       i5: instr({ name: '', maneuver: { type: 'continue', modifier: 'uturn' } }),
+      w1: window.__car.webUrl('https://www.netflix.com/browse', true), w2: window.__car.webUrl('https://www.netflix.com/browse', false),
+      iso: window.__car.isoSecs('PT1H2M5S'),
       d1: fmtDist(347), d2: fmtDist(1530), d3: fmtDist(23456), s1: sayDist(312), s2: sayDist(1500)
     };
   });
@@ -122,6 +150,11 @@ console.log('Units');
   await test('Thai turn instructions', () => {
     assert.equal(r.i1, 'เลี้ยวซ้าย เข้าสู่ถนนสุขุมวิท'); assert.equal(r.i2, 'เข้าวงเวียน ออกทางออกที่ 2');
     assert.equal(r.i3, 'ถึงจุดหมายปลายทาง'); assert.equal(r.i4, 'ที่ทางแยก ชิดขวา'); assert.equal(r.i5, 'กลับรถ');
+  });
+  await test('Netflix opens as a website in Chrome on Android, not the app', () => {
+    assert.match(r.w1, /^intent:\/\/www\.netflix\.com\/browse#Intent;scheme=https;package=com\.android\.chrome;S\.browser_fallback_url=https%3A%2F%2Fwww\.netflix\.com%2Fbrowse;end$/);
+    assert.equal(r.w2, 'https://www.netflix.com/browse');
+    assert.equal(r.iso, 3725);
   });
   await test('distance formatting', () => {
     assert.equal(r.d1, '350 ม.'); assert.equal(r.d2, '1.5 กม.'); assert.equal(r.d3, '23 กม.');
@@ -208,7 +241,28 @@ console.log('Navigation');
     const line = await page.locator('.leaflet-overlay-pane path').last().boundingBox();
     assert.ok(line && line.height > 100, 'route line drawn on the map, height ' + line?.height);
   });
+  await test('alternative routes listed with toll badges and selectable', async () => {
+    assert.equal(await page.locator('.alt').count(), 2);
+    assert.match(await page.textContent('.alt >> nth=0'), /เสียค่าผ่านทาง.*ทางด่วน/s);
+    assert.match(await page.textContent('.alt >> nth=1'), /ไม่มีค่าผ่านทาง/);
+    await page.click('.alt >> nth=1');
+    assert.equal(await page.evaluate(() => __car.nav.route.distance), 2500);
+    assert.match(await page.textContent('#rcMeta'), /2\.5 กม\. · 7 นาที/);
+    await page.click('.alt >> nth=0');
+  });
   await shot(page, '3-route');
+  await test('route options: avoid tolls + highways, falls back when the server cannot do both', async () => {
+    await page.click('#rcOpts');
+    await page.check('#oToll'); await page.check('#oMotorway'); await page.click('#oSave');
+    await page.waitForFunction(() => __car.nav.route?.distance === 2500);
+    assert.deepEqual(counts.exclude.slice(-2), ['toll,motorway', 'toll']);
+    assert.match(await page.textContent('#toast'), /เลี่ยงทางด่วนไม่ได้/);
+    assert.match(await page.textContent('#rcMeta'), /เลี่ยงทางเสียค่าผ่านทาง, ทางด่วน/);
+    assert.ok(await page.locator('#rcOpts.on').count(), 'options button shows active');
+    await shot(page, '3b-route-options');
+    await page.click('#rcOpts'); await page.uncheck('#oToll'); await page.uncheck('#oMotorway'); await page.click('#oSave');
+    await page.waitForFunction(() => __car.nav.route?.distance === 1760);
+  });
   await test('start navigation → banner shows first turn', async () => {
     await page.click('#rcGo');
     assert.ok(await vis(page, '#navBanner'));
@@ -300,7 +354,7 @@ console.log('YouTube');
     await page.click('.vitem >> nth=0');
     await page.waitForFunction(() => window.__yt?.calls.length);
     const c = await page.evaluate(() => __yt.calls[0]);
-    assert.deepEqual(c, ['new', 'AAAAAAAAAAA', null, 'https://www.youtube-nocookie.com']);
+    assert.deepEqual(c, ['new', 'AAAAAAAAAAA', null, 'https://www.youtube.com']);
     assert.equal(await page.evaluate(() => __yt.players[0].o.playerVars.fs), 0, "YouTube's own fullscreen is off");
     assert.ok(await page.locator('#ytHost iframe').isVisible());
   });
@@ -354,7 +408,30 @@ console.log('YouTube');
   });
   await test('history shows after reload', async () => {
     await page.reload(); await page.waitForFunction(() => window.__car);
-    assert.match(await page.textContent('#ytList'), /ดูล่าสุด/);
+    assert.ok(await page.locator('[data-tab="recent"].on').count(), 'recent tab open');
+    assert.ok(await page.locator('#ytList .vitem').count() >= 2, 'watched videos listed');
+  });
+  await test('YouTube sign-in: subscriptions, liked videos, playlists', async () => {
+    await page.click('[data-tab="subs"]');
+    assert.match(await page.textContent('#ytList'), /เข้าสู่ระบบด้วย Google/);
+    await page.click('#ytList .btn[data-tab="account"]');
+    await page.fill('#accCid', 'test.apps.googleusercontent.com'); await page.click('#accIn');
+    await page.waitForSelector('.vitem:has-text("New upload")');
+    assert.equal(await page.evaluate(() => window.__gis), 1);
+    await page.click('[data-tab="liked"]'); await page.waitForSelector('.vitem:has-text("Liked one")');
+    assert.match(await page.textContent('.vitem .dur'), /3:05/);
+    await page.click('[data-tab="lists"]'); await page.waitForSelector('.vitem:has-text("Road trip")');
+    await shot(page, '8-yt-account');
+    await page.click('.vitem:has-text("Road trip")');
+    await page.waitForFunction(() => window.__yt?.calls.length);
+    assert.ok((await page.evaluate(() => __yt.calls.at(-1))).includes('PLmine'), 'playlist plays');
+    assert.ok(counts.bearer >= 5, 'requests carry the account token');
+  });
+  await test('signed-in search uses the account (no API key needed)', async () => {
+    await page.evaluate(() => { __car.st.ytKey = ''; });
+    await page.fill('#ytQ', 'drive'); await page.press('#ytQ', 'Enter');
+    await page.waitForSelector('.vitem:has-text("Signed-in result")');
+    assert.equal(counts.ytsearchBearer, 1);
   });
   await test('no console errors in YouTube', () => assert.deepEqual(errors, []));
   await ctx.close();
@@ -366,7 +443,8 @@ console.log('Apps');
   const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
   await test('Netflix opens in a new window', async () => {
     await page.click('.tile:has-text("Netflix")');
-    assert.match(await page.textContent('#sheet'), /แยกหน้าจอ/, 'explains why it opens separately');
+    assert.match(await page.textContent('#sheet'), /เปิดเป็นเว็บไซต์/, 'explains it opens as a website');
+    assert.match(await page.textContent('#sheet'), /เวอร์ชันเดสก์ท็อป/);
     const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#extGo')]);
     assert.match(pop.url(), /netflix\.com/); await pop.close();
     const [pop2] = await Promise.all([ctx.waitForEvent('page'), page.click('.tile:has-text("Netflix")')]);

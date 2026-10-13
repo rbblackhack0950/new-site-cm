@@ -12,7 +12,7 @@ const store = {
   get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
+const DEF = { ratio: 50, swapped: false, stack: null, mode: 'split', voice: true, autoNext: true, ytKey: '', ytClientId: '', avoid: { toll: false, motorway: false, ferry: false }, custom: [], extSeen: [], recentDest: [], ytHistory: [], lastView: 'home' };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 const save = () => store.set('carscreen', st);
 
@@ -39,6 +39,7 @@ const P = {
   fsx: 'M5 16h3v3h2v-5H5zm3-8H5v2h5V5H8zm6 11h2v-3h3v-2h-5zm2-11V5h-2v5h5V8z',
   dl: 'M19 9h-4V3H9v6H5l7 7zM5 18v2h14v-2z',
   tune: 'M3 17v2h6v-2zM3 5v2h10V5zm10 16v-2h8v-2h-8v-2h-2v6zM7 9v2H3v2h4v2h2V9zm14 4v-2H11v2zm-6-4h2V7h4V5h-4V3h-2z',
+  person: 'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4m0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4',
   more: 'M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2m12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2m-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2',
   add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z',
   place: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7m0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5',
@@ -251,12 +252,14 @@ function arrowFor(step) {
 // OpenStreetMap tiles (no key needed), darkened with a CSS filter for night-friendly driving
 const TILE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const REFOLLOW_MS = 8000;
+const AVOID = ['toll', 'motorway', 'ferry'];
+const AVOID_TXT = { toll: 'ทางเสียค่าผ่านทาง', motorway: 'ทางด่วน', ferry: 'เรือข้ามฟาก' };
 const OSRM = 'https://router.project-osrm.org/route/v1/driving/';
 const NOMI = 'https://nominatim.openstreetmap.org/';
 let map = null;
 const L_ = window.L;
 const here = { ll: null, acc: null, heading: null, speed: null, prev: null };
-let meMarker, destMarker, routeLines = [], follow = true;
+let meMarker, destMarker, routeLines = [], altLines = [], follow = true;
 
 if (L_) {
   map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
@@ -393,14 +396,28 @@ async function route(reroute) {
   }
   nav.routing = true;
   const from = here.ll, to = [nav.dest.lat, nav.dest.lng];
-  const url = `${OSRM}${from[1]},${from[0]};${to[1]},${to[0]}?overview=false&steps=true&geometries=geojson`;
+  const base = `${OSRM}${from[1]},${from[0]};${to[1]},${to[0]}?overview=false&steps=true&geometries=geojson&alternatives=${reroute ? 'false' : 3}`;
+  const want = AVOID.filter(k => st.avoid[k]);
+  // the public OSRM server may only accept one class per request: try all, then one at a time, then none
+  const tries = [want, ...(want.length > 1 ? want.map(k => [k]) : []), ...(want.length ? [[]] : [])];
   try {
-    const j = await getJSON(url, 12000);
-    if (j.code !== 'Ok' || !j.routes?.length) throw new Error(j.code);
+    let j, used, last;
+    for (const ex of tries) {
+      try {
+        j = await getJSON(base + (ex.length ? '&exclude=' + ex.join(',') : ''), 12000);
+        if (j.code === 'Ok' && j.routes?.length) { used = ex; break; }
+        last = new Error(j.code);
+      } catch (e) { last = e; }
+    }
+    if (!used) throw last;
+    const missed = want.filter(k => !used.includes(k));
+    if (missed.length && !reroute) toast('เลี่ยง' + missed.map(k => AVOID_TXT[k]).join(' และ') + 'ไม่ได้ในเส้นทางนี้', 5000);
+    nav.alts = reroute ? [] : j.routes;
+    nav.altIdx = 0;
     setRoute(j.routes[0]);
     if (!reroute) {
-      $('#rcMeta').textContent = `${fmtDist(nav.route.distance)} · ${fmtDur(nav.route.duration)}`;
-      map?.fitBounds(L_.latLngBounds(nav.line), { padding: [60, 60] });
+      renderAlts();
+      map?.fitBounds(L_.latLngBounds(j.routes.flatMap(r => routeLine(r).line)), { padding: [60, 60] });
       setFollow(false);
     }
   } catch (err) {
@@ -409,7 +426,7 @@ async function route(reroute) {
   } finally { nav.routing = false; }
 }
 
-function setRoute(r) {
+function routeLine(r) {
   const line = [], stepAt = [], steps = [];
   r.legs[0].steps.forEach(s => {
     const pts = s.geometry.coordinates.map(c => [c[1], c[0]]);
@@ -419,6 +436,56 @@ function setRoute(r) {
     line.push(...pts);
   });
   if (line.length < 2) line.push(line[0] || here.ll);
+  return { line, stepAt, steps };
+}
+// road classes OSRM reports along the route: toll, motorway, ferry
+const routeClasses = r => new Set(r.legs.flatMap(l => l.steps.flatMap(s => (s.intersections || []).flatMap(i => i.classes || []))));
+function routeChips(r) {
+  const c = routeClasses(r), out = [];
+  if (c.has('toll')) out.push('<span class="chip warn">เสียค่าผ่านทาง</span>');
+  if (c.has('motorway')) out.push('<span class="chip">ทางด่วน</span>');
+  if (c.has('ferry')) out.push('<span class="chip warn">เรือข้ามฟาก</span>');
+  if (!c.has('toll')) out.push('<span class="chip ok">ไม่มีค่าผ่านทาง</span>');
+  return out.join('');
+}
+function renderAlts() {
+  const alts = nav.alts || [];
+  const r = nav.route;
+  $('#rcMeta').textContent = `${fmtDist(r.distance)} · ${fmtDur(r.duration)}` + (AVOID.some(k => st.avoid[k]) ? ' · เลี่ยง' + AVOID.filter(k => st.avoid[k]).map(k => AVOID_TXT[k]).join(', ') : '');
+  $('#rcAlts').innerHTML = alts.map((a, i) => `<button class="alt${i === nav.altIdx ? ' on' : ''}" data-alt="${i}">
+      <b>${fmtDur(a.duration)}</b><span class="sub">${fmtDist(a.distance)}${i === 0 && alts.length > 1 ? ' · เร็วที่สุด' : ''}</span>${routeChips(a)}</button>`).join('');
+  drawAlts();
+}
+function drawAlts() {
+  altLines.forEach(l => l.remove()); altLines = [];
+  if (!map || nav.active) return;
+  (nav.alts || []).forEach((a, i) => {
+    if (i === nav.altIdx) return;
+    const l = L_.polyline(routeLine(a).line, { color: '#7d8796', weight: 7, opacity: .75 }).addTo(map);
+    l.on('click', () => pickAlt(i)); l.bringToBack(); altLines.push(l);
+  });
+}
+function pickAlt(i) { nav.altIdx = i; setRoute(nav.alts[i]); renderAlts(); }
+$('#rcAlts').addEventListener('click', e => { const b = e.target.closest('[data-alt]'); if (b) pickAlt(+b.dataset.alt); });
+
+function routeOptsSheet() {
+  openSheet(`<h2>ตัวเลือกเส้นทาง</h2>
+    <label class="switch">เลี่ยงทางที่เสียค่าผ่านทาง<input type="checkbox" id="oToll" ${st.avoid.toll ? 'checked' : ''}></label>
+    <label class="switch">เลี่ยงทางด่วน / มอเตอร์เวย์<input type="checkbox" id="oMotorway" ${st.avoid.motorway ? 'checked' : ''}></label>
+    <label class="switch">เลี่ยงเรือข้ามฟาก<input type="checkbox" id="oFerry" ${st.avoid.ferry ? 'checked' : ''}></label>
+    <div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn primary" id="oSave">ใช้</button></div>`, s => {
+    s.querySelector('#oSave').onclick = () => {
+      st.avoid = { toll: s.querySelector('#oToll').checked, motorway: s.querySelector('#oMotorway').checked, ferry: s.querySelector('#oFerry').checked };
+      save(); closeSheet(); optsBadge();
+      if (nav.dest) { $('#rcMeta').textContent = 'กำลังหาเส้นทาง…'; route(nav.active); }
+    };
+  });
+}
+const optsBadge = () => $('#rcOpts').classList.toggle('on', AVOID.some(k => st.avoid[k]));
+$('#rcOpts').onclick = routeOptsSheet;
+
+function setRoute(r) {
+  const { line, stepAt, steps } = routeLine(r);
   const cum = [0];
   for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + haversine(line[i - 1], line[i]));
   Object.assign(nav, { route: r, steps, line, cum, stepAt: stepAt.map(i => cum[i]), seg: 0, step: 1, said: {}, off: 0 });
@@ -436,6 +503,7 @@ function clearRoute() {
   stopNav(true);
   nav.dest = nav.route = null;
   routeLines.forEach(l => l.remove()); routeLines = [];
+  nav.alts = []; drawAlts();
   destMarker?.remove(); destMarker = null;
   $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
   qEl.value = ''; $('#qClear').hidden = true;
@@ -466,6 +534,7 @@ function startNav() {
   nav.active = true; nav.said = {};
   $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
   $('#mapPane').classList.add('navigating');
+  drawAlts();
   $('#navBanner').hidden = $('#navFoot').hidden = $('#speed').hidden = false;
   setVoiceIcon();
   if (st.mode === 'media') { st.mode = 'split'; applyLayout(); }
@@ -480,7 +549,7 @@ function stopNav(silent) {
   nav.active = false;
   $('#mapPane').classList.remove('navigating');
   $('#navBanner').hidden = $('#navFoot').hidden = $('#speed').hidden = true;
-  if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); }
+  if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); drawAlts(); }
   if (!wantAwake()) keepAwake(false);
 }
 $('#nfStop').onclick = () => { stopNav(); clearRoute(); };
@@ -563,16 +632,27 @@ function openExternal(url) {
   const a = Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener' });
   document.body.append(a); a.click(); a.remove();
 }
-// Netflix, Spotify and similar refuse to run inside another page, so they can only open as their own app/tab
+// On Android a plain link to netflix.com or youtube.com is handed to the installed app.
+// An explicit Chrome intent keeps it a website (falls back to the normal link without Chrome).
+const isAndroid = /android/i.test(navigator.userAgent);
+const webUrl = (url, android = isAndroid) => android
+  ? `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`
+  : url;
+function openWeb(url) {
+  if (isAndroid) location.href = webUrl(url); // launches Chrome; this page stays put
+  else openExternal(url);
+}
+// Netflix, Spotify and similar refuse to run inside another page, so they open as a website in the browser
 function openExtApp(a) {
-  if (st.extSeen?.includes(a.id || a.url)) return openExternal(a.url);
-  openSheet(`<h2>${esc(a.name)} เปิดในจอแบ่งไม่ได้</h2>
-    <div class="sub">${esc(a.name)} ไม่ยอมให้เว็บอื่นแสดงผลข้างใน (และใช้ระบบป้องกันลิขสิทธิ์) จึงต้องเปิดเป็นแอปหรือแท็บแยก ซึ่งจะเต็มจอทับแผนที่</div>
-    <div class="sub"><b>ถ้าอยากดูคู่กับแผนที่บน Android:</b> เปิด Car Screen กับแอป ${esc(a.name)} แล้วใช้ “แยกหน้าจอ” ของระบบ (กดปุ่มแอปล่าสุด → แตะไอคอนแอปด้านบน → แยกหน้าจอ) จากนั้นตั้ง Car Screen เป็น “แผนที่เต็มจอ” ในเมนู ⋯</div>
-    <div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn primary" id="extGo"><span class="ic" data-i="open"></span>เปิด ${esc(a.name)}</button></div>`, s => {
+  if (st.extSeen?.includes(a.id || a.url)) return openWeb(a.url);
+  openSheet(`<h2>${esc(a.name)} จะเปิดเป็นเว็บไซต์ในเบราว์เซอร์</h2>
+    <div class="sub">${esc(a.name)} ไม่ยอมให้เว็บอื่นแสดงผลข้างใน จึงแสดงในฝั่งนี้ไม่ได้ Car Screen จะเปิดเว็บ ${esc(a.name)} ใน Chrome แทนการเปิดแอป</div>
+    ${a.id === 'netflix' ? '<div class="sub"><b>ถ้า Netflix บอกให้ใช้แอป:</b> ใน Chrome แตะเมนู ⋮ → ติ๊ก “เว็บไซต์เวอร์ชันเดสก์ท็อป”</div>' : ''}
+    <div class="sub"><b>ดูคู่กับแผนที่บน Android:</b> กดปุ่มแอปล่าสุด → แตะไอคอน Car Screen → แยกหน้าจอ → เลือก Chrome แล้วตั้ง Car Screen เป็น “แผนที่เต็มจอ” ในเมนู ⋯</div>
+    <div class="row"><button class="btn" data-close>ยกเลิก</button><button class="btn primary" id="extGo"><span class="ic" data-i="open"></span>เปิดเว็บ ${esc(a.name)}</button></div>`, s => {
     s.querySelector('#extGo').onclick = () => {
       st.extSeen = [...(st.extSeen || []), a.id || a.url]; save();
-      closeSheet(); openExternal(a.url);
+      closeSheet(); openWeb(a.url);
     };
   });
 }
@@ -666,9 +746,8 @@ const fmtSecs = s => { if (!s) return ''; s = Math.round(s); const h = Math.floo
 const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
 
 async function ytSearch(q) {
-  if (st.ytKey) {
-    const p = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: 25, q, key: st.ytKey, videoEmbeddable: 'true', regionCode: 'TH', relevanceLanguage: 'th' });
-    const j = await getJSON('https://www.googleapis.com/youtube/v3/search?' + p);
+  if (st.ytKey || ytSignedIn()) {
+    const j = await ytApi('search', { part: 'snippet', type: 'video', maxResults: 25, q, videoEmbeddable: 'true', regionCode: 'TH', relevanceLanguage: 'th' });
     return j.items.filter(x => x.id?.videoId).map(x => ({ id: x.id.videoId, title: decode(x.snippet.title), author: decode(x.snippet.channelTitle) }));
   }
   const enc = encodeURIComponent(q);
@@ -694,7 +773,7 @@ async function ytSearch(q) {
 
 function vItem(v, i, on) {
   return `<button class="vitem${on ? ' on' : ''}" data-v="${i}">
-    <div class="th"><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg">${v.dur ? `<span class="dur">${fmtSecs(v.dur)}</span>` : ''}</div>
+    <div class="th"><img loading="lazy" alt="" src="${esc(v.thumb || `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`)}">${v.dur ? `<span class="dur">${fmtSecs(v.dur)}</span>` : v.count != null ? `<span class="dur">${v.count} วิดีโอ</span>` : ''}</div>
     <div class="grow"><div class="t">${esc(v.title || 'วิดีโอ YouTube')}</div><div class="sub title">${esc(v.author || '')}</div></div></button>`;
 }
 function renderList(items, label) {
@@ -705,8 +784,35 @@ function renderList(items, label) {
 }
 function ytShowIdle() {
   if (yt.cur || $('#ytList')._items?.length) return;
-  if (st.ytHistory.length) renderList(st.ytHistory, 'ดูล่าสุด');
-  else $('#ytList').innerHTML = `<div class="empty">${svg('play', ' style="width:48px;height:48px;color:#ff0033"')}<div>ค้นหาวิดีโอ หรือวางลิงก์ YouTube ในช่องด้านบน</div></div>`;
+  ytTab(yt.tab || 'recent');
+}
+// ---------- Home tabs: recent, and with a Google sign-in: subscriptions, liked, playlists ----------
+const TABS = { recent: 'ล่าสุด', subs: 'ติดตาม', liked: 'ชอบ', lists: 'เพลย์ลิสต์' };
+function tabsBar(active) {
+  return `<div class="chips">${Object.entries(TABS).map(([k, t]) => `<button class="chip-btn${k === active ? ' on' : ''}" data-tab="${k}">${t}</button>`).join('')}
+    <button class="chip-btn acct" data-tab="account">${svg('person')}${ytSignedIn() ? 'บัญชี' : 'เข้าสู่ระบบ'}</button></div>`;
+}
+async function ytTab(tab) {
+  yt.tab = tab;
+  const l = $('#ytList');
+  const head = tabsBar(tab);
+  const show = (items, empty) => {
+    l._items = items;
+    l.innerHTML = head + (items.length ? items.map((v, i) => vItem(v, i, yt.cur && v.id && v.id === yt.cur.id)).join('') : `<div class="empty">${empty}</div>`);
+  };
+  if (tab === 'recent') return show(st.ytHistory, `${svg('play', ' style="width:48px;height:48px;color:#ff0033"')}<div>ค้นหาวิดีโอ หรือวางลิงก์ YouTube ในช่องด้านบน</div>`);
+  if (!ytSignedIn() && !st.ytClientId) {
+    l._items = [];
+    l.innerHTML = head + `<div class="empty"><div>เข้าสู่ระบบด้วย Google เพื่อดูช่องที่ติดตาม วิดีโอที่ชอบ และเพลย์ลิสต์ของคุณ</div><button class="btn primary" data-tab="account">ตั้งค่าบัญชี</button></div>`;
+    return;
+  }
+  l._items = []; l.innerHTML = head + '<div class="empty">กำลังโหลด…</div>';
+  try {
+    const items = tab === 'subs' ? await ytSubsFeed() : tab === 'liked' ? await ytLiked() : await ytPlaylists();
+    if (yt.tab === tab) show(items, 'ยังไม่มีรายการ');
+  } catch (e) {
+    if (yt.tab === tab) { l._items = []; l.innerHTML = head + `<div class="empty"><div>โหลดไม่ได้ ${e?.message === 'auth' ? '(ยังไม่ได้เข้าสู่ระบบ)' : ''}</div><button class="btn" data-tab="${tab}">ลองอีกครั้ง</button></div>`; }
+  }
 }
 $('#ytForm').onsubmit = async e => {
   e.preventDefault();
@@ -725,16 +831,20 @@ $('#ytForm').onsubmit = async e => {
       <div class="sub">วางลิงก์วิดีโอแทนได้ หรือใส่ YouTube API key ในตั้งค่าเพื่อให้ค้นหาได้เสถียร</div>
       <div class="row"><button class="btn" id="ytOpenSearch"><span class="ic" data-i="open"></span>ค้นใน YouTube</button><button class="btn" id="ytKeyBtn">ตั้งค่า</button></div></div>`;
     paintIcons($('#ytList'));
-    $('#ytOpenSearch').onclick = () => openExternal('https://www.youtube.com/results?search_query=' + encodeURIComponent(q));
+    $('#ytOpenSearch').onclick = () => openWeb('https://www.youtube.com/results?search_query=' + encodeURIComponent(q));
     $('#ytKeyBtn').onclick = settingsSheet;
   }
 };
 $('#ytList').addEventListener('click', e => {
+  const t = e.target.closest('[data-tab]');
+  if (t) return t.dataset.tab === 'account' ? accountSheet() : ytTab(t.dataset.tab);
   const b = e.target.closest('.vitem'); if (!b) return;
-  const items = $('#ytList')._items;
-  yt.queue = items; yt.idx = +b.dataset.v;
-  ytPlay(items[yt.idx]);
+  const items = $('#ytList')._items, v = items[+b.dataset.v];
+  if (!v.id) { yt.queue = []; yt.idx = -1; return ytPlay(v); } // a playlist
+  yt.queue = items.filter(x => x.id); yt.idx = yt.queue.indexOf(v);
+  ytPlay(v);
 });
+$('#ytQ').addEventListener('input', () => { if (!$('#ytQ').value && !yt.cur) { $('#ytList')._items = []; ytTab(yt.tab || 'recent'); } });
 function openList(on) { $('#yt').classList.toggle('list-open', on); }
 $('#ytListBtn').onclick = () => openList(!$('#yt').classList.contains('list-open'));
 function setTheater(on) {
@@ -785,7 +895,7 @@ async function ytPlay(v) {
     }
     $('#ytHost').innerHTML = '<div id="ytPlayer"></div>';
     yt.player = new YT.Player('ytPlayer', {
-      host: 'https://www.youtube-nocookie.com',
+      host: 'https://www.youtube.com', // youtube.com (not -nocookie) so a signed-in account, Premium and history apply
       videoId: v.id || undefined,
       playerVars: v.list ? { ...vars, listType: 'playlist', list: v.list } : vars,
       events: {
@@ -804,7 +914,7 @@ async function ytPlay(v) {
     const q = new URLSearchParams({ autoplay: 1, playsinline: 1, rel: 0, fs: 0 });
     if (v.list) q.set('list', v.list);
     if (v.start) q.set('start', v.start);
-    $('#ytHost').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${v.id || 'videoseries'}?${q}" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    $('#ytHost').innerHTML = `<iframe src="https://www.youtube.com/embed/${v.id || 'videoseries'}?${q}" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
   }
 }
 function refreshTitle() {
@@ -824,11 +934,104 @@ function ytError(code) {
   $('#ytErrNext').hidden = !(yt.idx >= 0 && yt.idx < yt.queue.length - 1);
   $('#ytErr').hidden = false;
 }
-$('#ytErrOpen').onclick = () => { const v = yt.cur; if (v) openExternal(v.id ? `https://www.youtube.com/watch?v=${v.id}` : `https://www.youtube.com/playlist?list=${v.list}`); };
+$('#ytErrOpen').onclick = () => { const v = yt.cur; if (v) openWeb(v.id ? `https://www.youtube.com/watch?v=${v.id}` : `https://www.youtube.com/playlist?list=${v.list}`); };
 $('#ytErrNext').onclick = ytNext;
 function addHistory(v) {
   st.ytHistory = [{ id: v.id, title: v.title, author: v.author }, ...st.ytHistory.filter(x => x.id !== v.id)].slice(0, 30);
   save();
+}
+
+// ===================================================================
+// YouTube account
+//  - Player: the embed runs on youtube.com, so signing in to youtube.com in this browser
+//    gives the player your account (Premium without ads, watch history).
+//  - Lists: Google sign-in (OAuth client ID) reads subscriptions, likes and playlists.
+// ===================================================================
+const yta = Object.assign({ token: null, exp: 0 }, store.get('carscreen.ytauth', {}));
+const ytSignedIn = () => !!yta.token && Date.now() < yta.exp;
+let gisReady = null;
+function loadGIS() {
+  if (gisReady) return gisReady;
+  gisReady = new Promise((res, rej) => {
+    if (window.google?.accounts?.oauth2) return res();
+    const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+    s.onload = () => res(); s.onerror = () => { gisReady = null; rej(new Error('gis')); };
+    document.head.append(s);
+  });
+  return gisReady;
+}
+async function ytLogin(prompt = '') {
+  if (!st.ytClientId) throw new Error('auth');
+  await loadGIS();
+  return new Promise((res, rej) => {
+    google.accounts.oauth2.initTokenClient({
+      client_id: st.ytClientId,
+      scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      prompt,
+      callback: r => {
+        if (r.error) return rej(new Error('auth'));
+        yta.token = r.access_token; yta.exp = Date.now() + (r.expires_in - 60) * 1000;
+        store.set('carscreen.ytauth', { token: yta.token, exp: yta.exp });
+        res();
+      },
+      error_callback: () => rej(new Error('auth'))
+    }).requestAccessToken();
+  });
+}
+function ytLogout() {
+  if (yta.token && window.google?.accounts?.oauth2) try { google.accounts.oauth2.revoke(yta.token); } catch {}
+  yta.token = null; yta.exp = 0; store.set('carscreen.ytauth', {});
+}
+async function ytApi(path, params) {
+  const p = new URLSearchParams(params), opts = {};
+  if (ytSignedIn() || (!st.ytKey && st.ytClientId)) {
+    if (!ytSignedIn()) await ytLogin();
+    opts.headers = { Authorization: 'Bearer ' + yta.token };
+  } else if (st.ytKey) p.set('key', st.ytKey);
+  else throw new Error('auth');
+  return getJSON(`https://www.googleapis.com/youtube/v3/${path}?${p}`, 10000, opts);
+}
+const isoSecs = d => { const m = (d || '').match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; };
+const thumbOf = sn => sn?.thumbnails?.medium?.url || sn?.thumbnails?.default?.url;
+async function ytSubsFeed() {
+  const subs = await ytApi('subscriptions', { part: 'snippet', mine: 'true', maxResults: 50, order: 'relevance' });
+  const ids = subs.items.map(s => s.snippet.resourceId.channelId).slice(0, 20);
+  if (!ids.length) return [];
+  const ch = await ytApi('channels', { part: 'contentDetails', id: ids.join(','), maxResults: 50 });
+  const uploads = ch.items.map(c => c.contentDetails.relatedPlaylists.uploads);
+  const lists = await Promise.all(uploads.map(pl => ytApi('playlistItems', { part: 'snippet,contentDetails', playlistId: pl, maxResults: 4 }).catch(() => ({ items: [] }))));
+  return lists.flatMap(l => l.items)
+    .map(x => ({ id: x.contentDetails.videoId, title: x.snippet.title, author: x.snippet.videoOwnerChannelTitle || x.snippet.channelTitle, at: x.contentDetails.videoPublishedAt || x.snippet.publishedAt }))
+    .filter(x => x.id).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 40);
+}
+async function ytLiked() {
+  const j = await ytApi('videos', { part: 'snippet,contentDetails', myRating: 'like', maxResults: 30 });
+  return j.items.map(x => ({ id: x.id, title: x.snippet.title, author: x.snippet.channelTitle, dur: isoSecs(x.contentDetails.duration) }));
+}
+async function ytPlaylists() {
+  const j = await ytApi('playlists', { part: 'snippet,contentDetails', mine: 'true', maxResults: 30 });
+  return j.items.map(x => ({ list: x.id, title: x.snippet.title, author: 'เพลย์ลิสต์', thumb: thumbOf(x.snippet), count: x.contentDetails.itemCount }));
+}
+function accountSheet() {
+  const origin = location.origin;
+  openSheet(`<h2>บัญชี YouTube</h2>
+    <div class="sub"><b>1. ใช้บัญชีในตัวเล่นวิดีโอ</b> (YouTube Premium ไม่มีโฆษณา, บันทึกประวัติการดู) เข้าสู่ระบบ youtube.com ใน Chrome ครั้งเดียว แล้วกลับมาที่นี่</div>
+    <button class="btn" id="accWeb"><span class="ic" data-i="open"></span>เข้าสู่ระบบ youtube.com</button>
+    <div class="sub"><b>2. ดูช่องที่ติดตาม วิดีโอที่ชอบ เพลย์ลิสต์</b> และค้นหาได้เสถียร ต้องใช้ Google OAuth Client ID (ตั้งครั้งเดียว ฟรี)</div>
+    <label>Google OAuth Client ID<input type="text" id="accCid" value="${esc(st.ytClientId)}" placeholder="xxxx.apps.googleusercontent.com" autocapitalize="off" autocomplete="off"></label>
+    <div class="sub">วิธีสร้าง: Google Cloud Console → เปิด “YouTube Data API v3” → OAuth consent screen (External, เพิ่มอีเมลคุณเป็น Test user) → Credentials → Create OAuth client ID → Web application → Authorized JavaScript origins ใส่ <b>${esc(origin)}</b></div>
+    <div class="sub">สถานะ: ${ytSignedIn() ? 'เข้าสู่ระบบแล้ว' : 'ยังไม่ได้เข้าสู่ระบบ'}</div>
+    <div class="row">${ytSignedIn() ? '<button class="btn" id="accOut">ออกจากระบบ</button>' : '<button class="btn" data-close>ปิด</button>'}<button class="btn primary" id="accIn">เข้าสู่ระบบด้วย Google</button></div>`, s => {
+    s.querySelector('#accWeb').onclick = () => openWeb('https://accounts.google.com/ServiceLogin?service=youtube&continue=' + encodeURIComponent('https://www.youtube.com/'));
+    s.querySelector('#accOut')?.addEventListener('click', () => { ytLogout(); closeSheet(); ytTab('recent'); toast('ออกจากระบบแล้ว', 1500); });
+    s.querySelector('#accCid').addEventListener('change', e => { st.ytClientId = e.target.value.trim(); save(); if (st.ytClientId) loadGIS().catch(() => {}); });
+    s.querySelector('#accIn').onclick = async () => {
+      st.ytClientId = s.querySelector('#accCid').value.trim(); save();
+      if (!st.ytClientId) return toast('ใส่ Client ID ก่อน');
+      try { await ytLogin('select_account'); closeSheet(); toast('เข้าสู่ระบบแล้ว', 1500); ytTab('subs'); }
+      catch { toast('เข้าสู่ระบบไม่สำเร็จ ตรวจสอบ Client ID และ Authorized JavaScript origins', 6000); }
+    };
+  });
 }
 
 // ===================================================================
@@ -871,9 +1074,11 @@ applyLayout();
 renderTiles();
 showView(st.lastView === 'web' ? 'home' : st.lastView);
 setVoiceIcon();
+optsBadge();
+if (st.ytClientId) loadGIS().catch(() => {});
 wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, yt, instr, setRoute, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, yt, instr, setRoute, webUrl, isoSecs, ytParse, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();
