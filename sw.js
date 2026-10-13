@@ -2,8 +2,8 @@
 // Cache first, so the app starts instantly even on a slow car connection. Every release changes CACHE,
 // which makes the browser install this worker again: it downloads fresh files, takes over, and the page
 // reloads once (see app.js), so updates still arrive on the next launch.
-const CACHE = 'carscreen-v21';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/192.png', 'icons/512.png', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
+const CACHE = 'carscreen-v23';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'icons/192.png', 'icons/512.png', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css'];
 self.addEventListener('install', e => {
   // cache: 'reload' skips the browser's HTTP cache, so the new version's files are really new
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))));

@@ -1,4 +1,4 @@
-// End-to-end test: real Chromium, every external service mocked.
+// End-to-end test: real Chromium, every external service and the Android app (window.CarScreenNative) faked.
 // Run: npm test   (SHOTS=dir to save screenshots)
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -30,27 +30,28 @@ const ALT = { distance: 2500, duration: 420, legs: [{ steps: [
   { name: 'ถนนพระราม 1', geometry: geo([P2, D]), maneuver: { type: 'turn', modifier: 'right', location: [P2[1], P2[0]] }, distance: 960 },
   { name: '', geometry: geo([D, D]), maneuver: { type: 'arrive', location: [D[1], D[0]] }, distance: 0 }
 ] }] };
-const GIS_STUB = `window.google = { accounts: { oauth2: {
-  initTokenClient(o) { return { requestAccessToken() { window.__gis = (window.__gis || 0) + 1; setTimeout(() => o.callback({ access_token: 'TOK', expires_in: 3600 }), 0); } }; },
-  revoke() {} } } };`;
-const PLACES = [{ lat: String(D[0]), lon: String(D[1]), name: 'เซ็นทรัลเวิลด์', display_name: 'เซ็นทรัลเวิลด์, ถนนราชดำริ, ปทุมวัน, กรุงเทพมหานคร' }];
-const PIPED = { items: [
-  { type: 'stream', url: '/watch?v=AAAAAAAAAAA', title: 'เพลงชิลขับรถ', uploaderName: 'Chill TH', duration: 3605 },
-  { type: 'stream', url: '/watch?v=BBBBBBBBBBB', title: 'Lofi drive', uploaderName: 'Lofi', duration: 245 },
-  { type: 'channel', url: '/channel/x', name: 'not a video' }
-] };
-const YT_STUB = `
-window.__yt = { players: [], calls: [] };
-window.YT = { PlayerState: { ENDED: 0, PLAYING: 1 }, Player: class {
-  constructor(id, o) { this.o = o; __yt.players.push(this); __yt.calls.push(['new', o.videoId, o.playerVars.list || null, o.host]);
-    const f = document.createElement('iframe'); f.id = id; document.getElementById(id).replaceWith(f); }
-  loadVideoById(x) { __yt.calls.push(['load', x.videoId]); }
-  loadPlaylist(x) { __yt.calls.push(['playlist', x.list]); }
-  pauseVideo() { __yt.calls.push(['pause']); }
-  getVideoData() { return { title: 'stub title', author: 'stub' }; }
-} };
-setTimeout(() => window.onYouTubeIframeAPIReady && window.onYouTubeIframeAPIReady(), 0);`;
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+const PLACE_URL = 'https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.756!4d100.54';
+
+// The Android app's bridge, recording every call. `version` picks the API generation:
+// 21 = two browser views (paneLoad/paneRect/paneStop), 20 = media side only (load/rect/stop).
+function fakeApp(version) {
+  window.__native = [];
+  const rec = (...a) => __native.push(a);
+  const n = {
+    version: () => '1', appVersion: () => window.__appVer ?? version, inSplitScreen: () => false,
+    load: u => rec('load', u), rect: (x, y, w, h, s) => rec('rect', Math.round(x), Math.round(y), Math.round(w), Math.round(h), s),
+    stop: () => rec('stop'), back: () => rec('back'), external: u => rec('external', u),
+    update: (u, h) => rec('update', u, h),
+    httpGet: (id, u) => { rec('http', u); setTimeout(() => __http(id, 200, 'https://www.google.com/maps/place/Wat+Arun/@13.74,100.48,17z/data=!3d13.7437!4d100.4888', ''), 10); }
+  };
+  if (version >= 21) Object.assign(n, {
+    paneLoad: (id, u) => rec('paneLoad', id, u),
+    paneRect: (id, x, y, w, h, s) => rec('paneRect', id, Math.round(x), Math.round(y), Math.round(w), Math.round(h), s),
+    paneStop: id => rec('paneStop', id)
+  });
+  window.CarScreenNative = n;
+}
 
 // ---------- harness ----------
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
@@ -62,7 +63,8 @@ async function test(name, fn) {
   try { await fn(); passed++; console.log('  ✓', name); }
   catch (e) { failed++; if (SHOTS && globalThis.__pg) await globalThis.__pg.screenshot({ path: path.join(SHOTS, 'fail-' + name.replace(/\W+/g, '_').slice(0, 30) + '.png') }).catch(() => {}); console.log('  ✗', name, '\n    ', e.message.split('\n').filter((l, i) => i < 8 || /intercepts|not visible|not stable|outside/.test(l)).slice(0, 8).join('\n     ')); }
 }
-async function newPage(viewport, extra = {}, init = null) {
+// app: 21 (default), 20 (older app) or 0 (plain browser, no app)
+async function newPage(viewport, { app = 21, ...extra } = {}) {
   const ctx = await browser.newContext({ viewport, geolocation: { latitude: A[0], longitude: A[1], accuracy: 8 }, permissions: ['geolocation'], locale: 'th-TH', ...extra });
   // headless Chromium does not push setGeolocation() changes to watchPosition, so drive GPS from the test
   await ctx.addInitScript(([lat, lng]) => {
@@ -75,7 +77,7 @@ async function newPage(viewport, extra = {}, init = null) {
     } });
     window.__setPos = (lat, lng, speed) => { last = mk(lat, lng, speed); cbs.forEach(f => f(last)); };
   }, A);
-  if (init) await ctx.addInitScript(init);
+  if (app) await ctx.addInitScript(fakeApp, app);
   const page = await ctx.newPage();
   page.setDefaultTimeout(5000);
   globalThis.__pg = page;
@@ -85,506 +87,66 @@ async function newPage(viewport, extra = {}, init = null) {
   await ctx.route(/^https?:\/\/(?!localhost)/, route => {
     const u = route.request().url(); const hit = k => (counts[k] = (counts[k] || 0) + 1);
     const json = b => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(b) });
-    if (u.includes('tile.openstreetmap.org') || u.includes('i.ytimg.com')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+    if (u.includes('tile.openstreetmap.org')) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
     if (u.includes('router.project-osrm.org')) {
       hit('osrm'); const ex = new URL(u).searchParams.get('exclude');
       if (ex) (counts.exclude = counts.exclude || []).push(ex);
       if (ex && ex.includes(',')) return route.fulfill({ status: 400, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ code: 'InvalidValue' }) });
       return json(ex === 'toll' ? { code: 'Ok', routes: [ALT] } : { code: 'Ok', routes: [ROUTE.routes[0], ALT] });
     }
-    if (u.includes('accounts.google.com/gsi/client')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB });
-    if (u.includes('nominatim.openstreetmap.org')) { hit('nominatim'); return json(PLACES); }
-    if (u.includes('search.longdo.com')) { hit('longdo'); return json({ meta: {}, data: [
-      { type: 'poi', id: 'A1', name: 'ร้านกาแฟลับ ซอยสรณคมน์', lat: 13.7470, lon: 100.5345, address: 'ถนนสรณคมน์ กรุงเทพฯ' },
-      { type: 'poi', id: 'A2', name: 'เซ็นทรัลเวิลด์', lat: 13.7560, lon: 100.5400, address: 'ราชดำริ' }] }); }
-    if (u.includes('youtube.com/iframe_api')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: YT_STUB });
-    if (u.includes('pipedapi.kavin.rocks')) { hit('piped0'); return route.fulfill({ status: 502, body: 'down' }); }
-    if (u.includes('api.piped.private.coffee')) {
-      hit('piped1'); const p = new URL(u).pathname;
-      if (p.startsWith('/streams/')) { hit('related'); return json({ relatedStreams: [
-        { type: 'stream', url: '/watch?v=RRRRRRRRRR1', title: 'Related one', uploaderName: 'R', duration: 200 },
-        { type: 'stream', url: '/watch?v=RRRRRRRRRR2', title: 'Related two', uploaderName: 'R', duration: 210 }] }); }
-      if (p === '/trending') { hit('trending'); return json([
-        { type: 'stream', url: '/watch?v=TTTTTTTTTT1', title: 'Trend one', uploaderName: 'T', duration: 300 },
-        { type: 'stream', url: '/watch?v=TTTTTTTTTT2', title: 'Trend two', uploaderName: 'T', duration: 310 }]); }
-      return json(PIPED);
-    }
-    if (u.includes('googleapis.com/youtube')) {
-      const auth = route.request().headers().authorization, p = new URL(u).pathname.split('/').pop();
-      if (auth) { if (auth !== 'Bearer TOK') return route.fulfill({ status: 401, body: '' }); hit('bearer'); }
-      if (p === 'search') { hit(auth ? 'ytsearchBearer' : 'ytapi'); return json({ items: [{ id: { videoId: 'KKKKKKKKKKK' }, snippet: { title: auth ? 'Signed-in result' : 'From &amp; API', channelTitle: 'Ch' } }] }); }
-      if (p === 'subscriptions') return json({ items: [{ snippet: { resourceId: { channelId: 'C1' } } }] });
-      if (p === 'channels') return json({ items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] });
-      if (p === 'playlistItems') return json({ items: [{ snippet: { title: 'New upload', channelTitle: 'Ch1' }, contentDetails: { videoId: 'SSSSSSSSSSS', videoPublishedAt: '2026-10-01T00:00:00Z' } }] });
-      if (p === 'videos') return json({ items: [{ id: 'LLLLLLLLLLL', snippet: { title: 'Liked one', channelTitle: 'X' }, contentDetails: { duration: 'PT3M5S' } }] });
-      if (p === 'playlists') return json({ items: [{ id: 'PLmine', snippet: { title: 'Road trip', thumbnails: { medium: { url: 'https://i.ytimg.com/x.jpg' } } }, contentDetails: { itemCount: 12 } }] });
-    }
     return route.fulfill({ status: 404, body: '' });
   });
   await page.goto(BASE);
   await page.waitForFunction(() => window.__car && window.__car.here.ll);
-  return { page, ctx, errors };
+  const calls = kind => page.evaluate(k => __native.filter(c => c[0] === k), kind);
+  const last = async (kind, id) => (await calls(kind)).filter(c => id == null || c[1] === id).at(-1);
+  return { page, ctx, errors, calls, last };
 }
 const shot = (page, name) => SHOTS && page.screenshot({ path: path.join(SHOTS, name + '.png') });
 const vis = (page, sel) => page.locator(sel).isVisible();
+const box = (page, sel) => page.locator(sel).boundingBox();
 
-// ---------- unit-ish ----------
+// ---------- units ----------
 console.log('Units');
 {
   const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
   const r = await page.evaluate(() => {
-    const { ytParse, instr, fmtDist, sayDist } = window.__car;
+    const { instr, fmtDist, sayDist, parseGmaps } = window.__car;
     return {
-      a: ytParse('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s'),
-      b: ytParse('https://youtu.be/dQw4w9WgXcQ?si=abc'),
-      c: ytParse('https://m.youtube.com/shorts/dQw4w9WgXcQ'),
-      d: ytParse('https://www.youtube.com/playlist?list=PL123'),
-      e: ytParse('dQw4w9WgXcQ'),
-      f: ytParse('https://example.com/watch?v=dQw4w9WgXcQ'),
-      g: ytParse('ร้านกาแฟ'),
-      h: ytParse('youtube.com/watch?v=dQw4w9WgXcQ&list=PL9'),
       i1: instr({ name: 'ถนนสุขุมวิท', maneuver: { type: 'turn', modifier: 'left' } }),
       i2: instr({ name: '', maneuver: { type: 'roundabout', exit: 2 } }),
       i3: instr({ name: '', maneuver: { type: 'arrive' } }),
       i4: instr({ name: '', maneuver: { type: 'fork', modifier: 'slight right' } }),
       i5: instr({ name: '', maneuver: { type: 'continue', modifier: 'uturn' } }),
-      w1: window.__car.webUrl('https://www.netflix.com/browse', true), w2: window.__car.webUrl('https://www.netflix.com/browse', false),
-      iso: window.__car.isoSecs('PT1H2M5S'),
-      d1: fmtDist(347), d2: fmtDist(1530), d3: fmtDist(23456), s1: sayDist(312), s2: sayDist(1500)
+      d1: fmtDist(347), d2: fmtDist(1530), d3: fmtDist(23456), s1: sayDist(312), s2: sayDist(1500),
+      g1: parseGmaps('https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3m1!4b1!3d13.746289!4d100.534878'),
+      g2: parseGmaps('https://maps.google.com/?q=13.7563,100.5018'),
+      g3: parseGmaps('https://maps.app.goo.gl/AbCdEf')
     };
-  });
-  await test('YouTube link parsing', () => {
-    assert.deepEqual(r.a, { id: 'dQw4w9WgXcQ', list: null, start: 90 });
-    assert.equal(r.b.id, 'dQw4w9WgXcQ'); assert.equal(r.c.id, 'dQw4w9WgXcQ');
-    assert.deepEqual([r.d.id, r.d.list], [null, 'PL123']);
-    assert.equal(r.e.id, 'dQw4w9WgXcQ'); assert.equal(r.f, null); assert.equal(r.g, null);
-    assert.equal(r.h.list, 'PL9');
   });
   await test('Thai turn instructions', () => {
     assert.equal(r.i1, 'เลี้ยวซ้าย เข้าสู่ถนนสุขุมวิท'); assert.equal(r.i2, 'เข้าวงเวียน ออกทางออกที่ 2');
     assert.equal(r.i3, 'ถึงจุดหมายปลายทาง'); assert.equal(r.i4, 'ที่ทางแยก ชิดขวา'); assert.equal(r.i5, 'กลับรถ');
   });
-  await test('Netflix opens as a website in Chrome on Android, not the app', () => {
-    assert.match(r.w1, /^intent:\/\/www\.netflix\.com\/browse#Intent;scheme=https;package=com\.android\.chrome;S\.browser_fallback_url=https%3A%2F%2Fwww\.netflix\.com%2Fbrowse;end$/);
-    assert.equal(r.w2, 'https://www.netflix.com/browse');
-    assert.equal(r.iso, 3725);
-  });
   await test('distance formatting', () => {
     assert.equal(r.d1, '350 ม.'); assert.equal(r.d2, '1.5 กม.'); assert.equal(r.d3, '23 กม.');
     assert.equal(r.s1, '300 เมตร'); assert.equal(r.s2, '1.5 กิโลเมตร');
   });
+  await test('Google Maps links: exact pin, q=, short links need the app', () => {
+    assert.deepEqual([r.g1.lat, r.g1.lng, r.g1.name], [13.746289, 100.534878, 'Siam Paragon']);
+    assert.deepEqual([r.g2.lat, r.g2.lng], [13.7563, 100.5018]);
+    assert.equal(r.g3, null);
+  });
+  await test('removed features are gone', async () => {
+    for (const sel of ['#yt', '#ytQ', '#install', '#rcGmaps', '#sLongdo', '#web', '#dockToggle', 'link[rel=manifest]']) assert.equal(await page.locator(sel).count(), 0, sel);
+    assert.equal(await page.evaluate(() => Object.keys(__car.st).filter(k => /yt|longdo|navGoogle|custom|extSeen/i.test(k)).length), 0, 'old settings cleaned up');
+  });
   await test('no console errors on load', () => assert.deepEqual(errors, []));
-  await test('startup check stays hidden when the app runs', async () => { await page.waitForTimeout(6500); assert.equal(await page.locator('#bootFail').count(), 0); });
+  await test('start-up notice stays hidden when the app runs', async () => { await page.waitForTimeout(3000); assert.equal(await page.locator('#bootFail').count(), 0); });
   await ctx.close();
 }
 
-// ---------- layout ----------
-console.log('Layout');
-{
-  const { page, ctx } = await newPage({ width: 1280, height: 800 });
-  const box = s => page.locator(s).boundingBox();
-  await test('landscape tablet: side by side 50/50', async () => {
-    const m = await box('#mapPane'), d = await box('#mediaPane');
-    assert.ok(m.x < d.x && Math.abs(m.y - d.y) < 2, 'side by side');
-    assert.ok(Math.abs(m.width - d.width) < 4, `equal widths ${m.width} vs ${d.width}`);
-  });
-  await shot(page, '1-home-landscape');
-  await test('controls auto-hide when idle and come back on touch', async () => {
-    await page.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 7000 });
-    await page.waitForTimeout(500);
-    assert.equal(await page.locator('#search').evaluate(e => getComputedStyle(e).opacity), '0');
-    await page.mouse.click(300, 400);
-    assert.equal(await page.evaluate(() => document.body.classList.contains('idle')), false);
-  });
-  await test('drag divider resizes panes', async () => {
-    const d = await box('#divider');
-    await page.mouse.move(d.x + d.width / 2, d.y + d.height / 2); await page.mouse.down();
-    await page.mouse.move(1280 * 0.7, 400, { steps: 5 }); await page.mouse.up();
-    const m = await box('#mapPane');
-    assert.ok(m.width > 800, 'map grew to ' + m.width);
-    assert.equal(await page.evaluate(() => window.__car.st.ratio), 70);
-  });
-  await test('menu: swap, map-only, media-only, split', async () => {
-    await page.click('#dockToggle'); assert.ok(await vis(page, '#dockBar'));
-    await page.click('#swap');
-    assert.ok((await box('#mediaPane')).x < (await box('#mapPane')).x, 'swapped');
-    await page.click('[data-mode="map"]'); assert.equal(await vis(page, '#mediaPane'), false);
-    await page.click('[data-mode="media"]'); assert.equal(await vis(page, '#mapPane'), false);
-    await page.click('[data-mode="split"]'); await page.click('#swap');
-    assert.ok(await vis(page, '#mapPane') && await vis(page, '#mediaPane'));
-    await page.mouse.click(5, 5); assert.equal(await vis(page, '#dockBar'), false, 'menu closes on outside tap');
-  });
-  await test('layout persists after reload', async () => {
-    await page.reload(); await page.waitForFunction(() => window.__car);
-    assert.equal(await page.evaluate(() => window.__car.st.ratio), 70);
-  });
-  await ctx.close();
-
-  const ph = await newPage({ width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  await test('portrait phone: stacked, no horizontal overflow', async () => {
-    const m = await ph.page.locator('#mapPane').boundingBox(), d = await ph.page.locator('#mediaPane').boundingBox();
-    assert.ok(m.y < d.y && Math.abs(m.x - d.x) < 2, 'stacked');
-    assert.equal(await ph.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  });
-  await test('portrait phone: menu fits on screen', async () => {
-    await ph.page.tap('#dockToggle');
-    const b = await ph.page.locator('#dockBar').boundingBox();
-    assert.ok(b.x >= 0 && b.x + b.width <= 390, `bar x=${b.x} w=${b.width}`);
-    await ph.page.tap('#dockToggle');
-  });
-  await shot(ph.page, '2-phone');
-  await ph.ctx.close();
-}
-
-// ---------- navigation ----------
-console.log('Navigation');
-{
-  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
-  const setPos = async (p, speed = 12) => { await page.evaluate(([a, b, s]) => __setPos(a, b, s), [p[0], p[1], speed]); await page.waitForTimeout(120); };
-  await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
-  await test('search shows results with distance', async () => {
-    await page.fill('#q', 'เซ็นทรัลเวิลด์'); await page.press('#q', 'Enter');
-    await page.waitForSelector('#results .ritem');
-    assert.match(await page.textContent('#results'), /เซ็นทรัลเวิลด์.*กม\./s);
-  });
-  await test('pick result → route card with distance & time', async () => {
-    await page.click('#results .ritem');
-    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
-    assert.match(await page.textContent('#rcMeta'), /1\.8 กม\. · 5 นาที/);
-    assert.equal(counts.osrm, 1);
-    const line = await page.locator('.leaflet-overlay-pane path').last().boundingBox();
-    assert.ok(line && line.height > 100, 'route line drawn on the map, height ' + line?.height);
-  });
-  await test('alternative routes listed with toll badges and selectable', async () => {
-    assert.equal(await page.locator('.alt').count(), 2);
-    assert.match(await page.textContent('.alt >> nth=0'), /เสียค่าผ่านทาง.*ทางด่วน/s);
-    assert.match(await page.textContent('.alt >> nth=1'), /ไม่มีค่าผ่านทาง/);
-    await page.click('.alt >> nth=1');
-    assert.equal(await page.evaluate(() => __car.nav.route.distance), 2500);
-    assert.match(await page.textContent('#rcMeta'), /2\.5 กม\. · 7 นาที/);
-    await page.click('.alt >> nth=0');
-  });
-  await shot(page, '3-route');
-  await test('route options: avoid tolls + highways, falls back when the server cannot do both', async () => {
-    await page.click('#rcOpts');
-    await page.check('#oToll'); await page.check('#oMotorway'); await page.click('#oSave');
-    await page.waitForFunction(() => __car.nav.route?.distance === 2500);
-    assert.deepEqual(counts.exclude.slice(-2), ['toll,motorway', 'toll']);
-    assert.match(await page.textContent('#toast'), /เลี่ยงทางด่วนไม่ได้/);
-    assert.match(await page.textContent('#rcMeta'), /เลี่ยงทางเสียค่าผ่านทาง, ทางด่วน/);
-    assert.ok(await page.locator('#rcOpts.on').count(), 'options button shows active');
-    await shot(page, '3b-route-options');
-    await page.click('#rcOpts'); await page.uncheck('#oToll'); await page.uncheck('#oMotorway'); await page.click('#oSave');
-    await page.waitForFunction(() => __car.nav.route?.distance === 1760);
-  });
-  await test('start navigation → banner shows first turn', async () => {
-    await page.click('#rcGo');
-    assert.ok(await vis(page, '#navBanner'));
-    assert.equal(await page.textContent('#nbText'), 'เลี้ยวขวา เข้าสู่ถนนเพชรบุรี');
-    assert.match(await page.textContent('#nbDist'), /4[45]0 ม\./);
-    assert.match(await page.textContent('#nfEta'), /^ถึง \d{2}:\d{2}/);
-    assert.match((await page.evaluate(() => __said)).join('|'), /เริ่มนำทาง/);
-  });
-  await test('driving toward the turn updates distance and speaks', async () => {
-    await setPos([13.7480, 100.5340]);
-    assert.match(await page.textContent('#nbDist'), /2[0-9]0 ม\./);
-    assert.match((await page.evaluate(() => __said)).join('|'), /อีก 200 เมตร เลี้ยวขวา/);
-    await setPos([13.7497, 100.5340]);
-    assert.match((await page.evaluate(() => __said)).at(-1), /^เลี้ยวขวา เข้าสู่ถนนเพชรบุรี/);
-  });
-  await shot(page, '4-navigating');
-  await test('after the turn the next maneuver shows', async () => {
-    await setPos([13.7500, 100.5360]);
-    assert.equal(await page.textContent('#nbText'), 'เลี้ยวซ้าย เข้าสู่ซอยทดสอบ');
-  });
-  await test('panning the map during navigation snaps back to the car', async () => {
-    await page.mouse.move(300, 450); await page.mouse.down(); await page.mouse.move(150, 300, { steps: 5 }); await page.mouse.up();
-    assert.ok(await page.locator('#recenter.off').count(), 'follow paused after pan');
-    await page.waitForSelector('#recenter:not(.off)', { timeout: 10000 });
-  });
-  await test('going off-route triggers reroute', async () => {
-    const before = counts.osrm;
-    for (const lng of [100.5300, 100.5299, 100.5298, 100.5297]) await setPos([13.7520, lng]);
-    await page.waitForTimeout(400);
-    assert.ok(counts.osrm > before, 'osrm called again');
-    await setPos([13.7500, 100.5380]);
-  });
-  await test('arriving ends navigation', async () => {
-    await setPos([13.7540, 100.5400]); await setPos([13.7559, 100.5400]);
-    await page.waitForSelector('#navBanner', { state: 'hidden' });
-    assert.match(await page.textContent('#toast'), /ถึงจุดหมาย/);
-  });
-  await test('recent destinations appear on focus', async () => {
-    await page.mouse.click(600, 600); // tap to bring the auto-hidden controls back
-    await page.click('#q');
-    await page.waitForSelector('#results [data-recent]');
-    await page.keyboard.press('Escape'); await page.mouse.click(600, 600);
-  });
-  await test('Google Maps hand-off opens directions', async () => {
-    await page.click('#q'); await page.click('#results [data-recent]');
-    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
-    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#rcGmaps')]);
-    assert.match(pop.url(), /google\.com\/maps\/dir\/\?api=1&destination=13\.756,100\.54/);
-    await pop.close();
-  });
-  await test('long-press on map sets destination', async () => {
-    await page.click('#rcClose');
-    await page.mouse.click(200, 500, { button: 'right' });
-    await page.waitForFunction(() => /กม\.|ม\./.test(document.querySelector('#rcMeta').textContent));
-    assert.equal(await page.textContent('#rcName'), 'ตำแหน่งที่เลือก');
-  });
-  await test('roundabout exit is not announced twice', async () => {
-    const types = await page.evaluate(() => {
-      const g = (a, b) => ({ type: 'LineString', coordinates: [a, b] });
-      const st = (type, a, b, extra = {}) => ({ name: 'ถนนสรณคมน์', geometry: g(a, b), maneuver: { type, location: a, ...extra } });
-      __car.setRoute({ distance: 900, duration: 120, legs: [{ steps: [
-        st('depart', [100.60, 13.90], [100.60, 13.903]),
-        st('roundabout', [100.60, 13.903], [100.601, 13.904], { exit: 6 }),
-        st('exit roundabout', [100.601, 13.904], [100.602, 13.908]),
-        st('arrive', [100.602, 13.908], [100.602, 13.908])
-      ] }] });
-      return __car.nav.steps.map(s => s.maneuver.type);
-    });
-    assert.deepEqual(types, ['depart', 'roundabout', 'arrive']);
-  });
-  await test('Longdo Map key adds Thai places, merged with OSM without duplicates', async () => {
-    await page.click('#rcClose').catch(() => {});
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
-    await page.fill('#sLongdo', 'abc123');
-    await page.click('#sLongdoTest');
-    await page.waitForFunction(() => /ใช้ได้ เจอ 2 สถานที่/.test(document.querySelector('#sLongdoRes').textContent));
-    await page.click('#sSave');
-    await page.mouse.click(600, 600);
-    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
-    await page.waitForSelector('#results .ritem:has-text("ร้านกาแฟลับ")');
-    assert.equal(await page.locator('#results .ritem:has-text("เซ็นทรัลเวิลด์")').count(), 1, 'same place from both sources listed once');
-    assert.ok(await page.locator('#results .ritem:has-text("ร้านกาแฟลับ") .src').count(), 'Longdo results are labelled');
-    const order = await page.$$eval('#results .ritem .dist', els => els.map(e => /กม/.test(e.textContent) ? parseFloat(e.textContent) * 1000 : parseFloat(e.textContent)));
-    assert.deepEqual(order, [...order].sort((a, b) => a - b), 'nearest first');
-    await page.keyboard.press('Escape'); await page.mouse.click(600, 600);
-  });
-  await test('pasting a Google Maps link sets the destination', async () => {
-    const r = await page.evaluate(() => [
-      __car.parseGmaps('https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d13.746289!4d100.534878'),
-      __car.parseGmaps('https://maps.google.com/?q=13.7563,100.5018'),
-      __car.parseGmaps('https://www.google.com/maps/@13.7,100.5,15z'),
-      __car.parseGmaps('https://maps.app.goo.gl/AbCdEf')]);
-    assert.deepEqual([r[0].lat, r[0].lng, r[0].name], [13.746289, 100.534878, 'Siam Paragon'], 'exact pin (!3d!4d) wins over map centre');
-    assert.deepEqual([r[1].lat, r[1].lng], [13.7563, 100.5018]);
-    assert.deepEqual([r[2].lat, r[2].lng], [13.7, 100.5]);
-    assert.equal(r[3], null, 'short links need resolving');
-    await page.fill('#q', 'https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3d13.746289!4d100.534878'); await page.press('#q', 'Enter');
-    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Siam Paragon');
-  });
-  await test('no console errors during navigation', () => assert.deepEqual(errors, []));
-  await ctx.close();
-}
-
-// ---------- YouTube ----------
-console.log('YouTube');
-{
-  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
-  await page.click('.tile:has-text("YouTube")');
-  await test('YouTube opens on recommendations (trending in Thailand when nothing watched yet)', async () => {
-    await page.waitForSelector('.vitem:has-text("Trend one")');
-    assert.ok(await page.locator('[data-tab="rec"].on').count());
-    assert.equal(counts.trending, 1);
-  });
-  await test('search falls back to a working source and lists videos only', async () => {
-    await page.fill('#ytQ', 'เพลงขับรถ'); await page.press('#ytQ', 'Enter');
-    await page.waitForSelector('.vitem');
-    assert.equal(await page.locator('.vitem').count(), 2);
-    assert.ok(counts.piped0 >= 1 && counts.piped1 >= 1, 'first server down, second used');
-    assert.match(await page.textContent('.vitem .dur'), /1:00:05/);
-  });
-  await shot(page, '5-yt-results');
-  await test('tap a result → player loads that video', async () => {
-    await page.click('.vitem >> nth=0');
-    await page.waitForFunction(() => window.__yt?.calls.length);
-    const c = await page.evaluate(() => __yt.calls[0]);
-    assert.deepEqual(c, ['new', 'AAAAAAAAAAA', null, 'https://www.youtube.com']);
-    assert.equal(await page.evaluate(() => __yt.players[0].o.playerVars.fs), 0, "YouTube's own fullscreen is off");
-    assert.ok(await page.locator('#ytHost iframe').isVisible());
-  });
-  await test('video end → next video plays automatically', async () => {
-    await page.evaluate(() => __yt.players[0].o.events.onStateChange({ data: 0 }));
-    assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['load', 'BBBBBBBBBBB']);
-  });
-  await test('blocked video → message and open-in-YouTube button', async () => {
-    await page.evaluate(() => __yt.players[0].o.events.onError({ data: 150 }));
-    assert.ok(await vis(page, '#ytErr'));
-    assert.match(await page.textContent('#ytErrMsg'), /ไม่อนุญาต/);
-    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#ytErrOpen')]);
-    assert.match(pop.url(), /youtube\.com\/watch\?v=BBBBBBBBBBB/); await pop.close();
-  });
-  await test('paste a link plays it directly', async () => {
-    await page.fill('#ytQ', 'https://youtu.be/dQw4w9WgXcQ'); await page.press('#ytQ', 'Enter');
-    assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['load', 'dQw4w9WgXcQ']);
-    assert.equal(await vis(page, '#ytErr'), false);
-  });
-  await test('after the last video, related videos play next', async () => {
-    await page.waitForFunction(() => __car.yt.queue.some(v => v.id === 'RRRRRRRRRR1'));
-    assert.match(await page.textContent('#ytList'), /Related one/);
-    await page.evaluate(() => __yt.players[0].o.events.onStateChange({ data: 0 }));
-    assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['load', 'RRRRRRRRRR1']);
-  });
-  await test('playlist link loads playlist', async () => {
-    await page.fill('#ytQ', 'https://www.youtube.com/playlist?list=PLxyz'); await page.press('#ytQ', 'Enter');
-    assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['playlist', 'PLxyz']);
-  });
-  await test('list toggle shows the queue under the player', async () => {
-    await page.click('#ytListBtn');
-    assert.ok(await page.locator('#yt').evaluate(e => e.classList.contains('list-open')));
-  });
-  await shot(page, '6-yt-playing');
-  await test('while playing, nothing of ours sits on top of the video', async () => {
-    const form = await page.locator('#ytForm').boundingBox(), stage = await page.locator('#ytStage').boundingBox();
-    assert.ok(stage.y >= form.y + form.height - 1, `bar above player (bar ends ${form.y + form.height}, video starts ${stage.y})`);
-    await page.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 7000 });
-    const top = await page.evaluate(() => { const r = document.querySelector('#ytStage').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width - 30, r.y + 10).closest('#ytHost') !== null; });
-    assert.ok(top, 'top-right corner of the video is the video itself, even when idle');
-    await page.mouse.click(300, 400);
-  });
-  await test('fullscreen button fills only the video pane, map stays visible, nothing covers it', async () => {
-    await page.click('#ytFs');
-    const stage = await page.locator('#ytStage').boundingBox(), pane = await page.locator('#mediaPane').boundingBox();
-    assert.ok(Math.abs(stage.height - pane.height) < 2 && Math.abs(stage.width - pane.width) < 2, 'video fills its pane');
-    assert.ok(await vis(page, '#mapPane'), 'map still on screen');
-    assert.equal(await vis(page, '#ytForm'), false, 'search bar removed');
-    for (const [fx, fy] of [[.95, .03], [.5, .03], [.05, .97], [.95, .97], [.5, .5]]) {
-      const ok = await page.evaluate(([fx, fy]) => { const r = document.querySelector('#ytStage').getBoundingClientRect(); return !!document.elementFromPoint(r.x + r.width * fx, r.y + r.height * fy).closest('#ytHost'); }, [fx, fy]);
-      assert.ok(ok, `video uncovered at ${fx},${fy}`);
-    }
-    await shot(page, '7-yt-pane-full');
-    await page.click('#dockToggle'); await page.click('#ytFsExit');
-    assert.equal(await page.locator('#yt.theater').count(), 0);
-    assert.ok(await vis(page, '#ytForm'));
-  });
-  await test('video frames are not allowed to go fullscreen over the map', async () => {
-    assert.doesNotMatch(await page.getAttribute('#webFrame', 'allow'), /fullscreen/);
-  });
-  await test('API key search uses YouTube Data API', async () => {
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
-    await page.fill('#sKey', 'AIzaTEST'); await page.click('#sSave');
-    await page.fill('#ytQ', 'news'); await page.press('#ytQ', 'Enter');
-    await page.waitForSelector('.vitem:has-text("From & API")');
-    assert.equal(counts.ytapi, 1);
-  });
-  await test('history shows after reload', async () => {
-    await page.reload(); await page.waitForFunction(() => window.__car);
-    // "Related one" was watched in the previous test, so only "Related two" should be suggested;
-    // an API key is set by now, so trending comes from the API's mostPopular chart (mocked as "Liked one")
-    await page.waitForSelector('.vitem:has-text("Related two")');
-    const txt = await page.textContent('#ytList');
-    assert.match(txt, /Liked one/, 'recommendations mix related and trending');
-    assert.doesNotMatch(txt, /Related one|Lofi drive/, 'already-watched videos are left out');
-    await page.click('[data-tab="recent"]');
-    assert.ok(await page.locator('#ytList .vitem').count() >= 2, 'watched videos listed');
-    await shot(page, '9-yt-recommended');
-    await page.click('[data-tab="rec"]');
-  });
-  await test('YouTube sign-in: subscriptions, liked videos, playlists', async () => {
-    await page.click('[data-tab="subs"]');
-    assert.match(await page.textContent('#ytList'), /เข้าสู่ระบบด้วย Google/);
-    await page.click('#ytList .btn[data-tab="account"]');
-    await page.fill('#accCid', 'test.apps.googleusercontent.com'); await page.click('#accIn');
-    await page.waitForSelector('.vitem:has-text("New upload")');
-    assert.equal(await page.evaluate(() => window.__gis), 1);
-    await page.click('[data-tab="liked"]'); await page.waitForSelector('.vitem:has-text("Liked one")');
-    assert.match(await page.textContent('.vitem .dur'), /3:05/);
-    await page.click('[data-tab="lists"]'); await page.waitForSelector('.vitem:has-text("Road trip")');
-    await shot(page, '8-yt-account');
-    await page.click('.vitem:has-text("Road trip")');
-    await page.waitForFunction(() => window.__yt?.calls.length);
-    assert.ok((await page.evaluate(() => __yt.calls.at(-1))).includes('PLmine'), 'playlist plays');
-    assert.ok(counts.bearer >= 5, 'requests carry the account token');
-  });
-  await test('signed-in search uses the account (no API key needed)', async () => {
-    await page.evaluate(() => { __car.st.ytKey = ''; });
-    await page.fill('#ytQ', 'drive'); await page.press('#ytQ', 'Enter');
-    await page.waitForSelector('.vitem:has-text("Signed-in result")');
-    assert.equal(counts.ytsearchBearer, 1);
-  });
-  await test('no console errors in YouTube', () => assert.deepEqual(errors, []));
-  await ctx.close();
-}
-
-// ---------- launcher & web ----------
-console.log('Apps');
-{
-  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
-  await test('Netflix opens in a new window', async () => {
-    await page.click('.tile:has-text("Netflix")');
-    assert.match(await page.textContent('#sheet'), /เปิดเป็นเว็บไซต์/, 'explains it opens as a website');
-    assert.match(await page.textContent('#sheet'), /เวอร์ชันเดสก์ท็อป/);
-    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#extGo')]);
-    assert.match(pop.url(), /netflix\.com/); await pop.close();
-    const [pop2] = await Promise.all([ctx.waitForEvent('page'), page.click('.tile:has-text("Netflix")')]);
-    assert.match(pop2.url(), /netflix\.com/, 'second time opens directly'); await pop2.close();
-  });
-  await test('add a custom app, open it inside, then delete it', async () => {
-    await page.click('#addTile');
-    await page.fill('#aName', 'Test'); await page.fill('#aUrl', 'localhost:8765/README.md'); await page.click('#aSave');
-    assert.ok(await vis(page, '.tile:has-text("Test")'));
-    await page.click('.tile:has-text("Test")');
-    assert.match(await page.getAttribute('#webFrame', 'src'), /README\.md/);
-    await page.click('#web .homeBtn');
-    await page.click('.tile:has-text("Test")', { button: 'right' }); await page.click('#del');
-    assert.equal(await page.locator('.tile:has-text("Test")').count(), 0);
-  });
-  await test('web view: YouTube links are routed to the player', async () => {
-    await page.click('.tile:has-text("เว็บ")');
-    await page.fill('#webQ', 'youtube.com/watch?v=dQw4w9WgXcQ'); await page.press('#webQ', 'Enter');
-    assert.ok(await vis(page, '#yt'));
-  });
-  await test('web view: words search Google inside the pane', async () => {
-    await page.click('#yt .homeBtn'); await page.click('.tile:has-text("เว็บ")');
-    await page.fill('#webQ', 'ร้านกาแฟ ใกล้ฉัน'); await page.press('#webQ', 'Enter');
-    assert.equal(await page.getAttribute('#webFrame', 'src'), 'https://www.google.com/search?igu=1&q=' + encodeURIComponent('ร้านกาแฟ ใกล้ฉัน'));
-    assert.equal(await vis(page, '#webMsg'), false);
-  });
-  await test('web view: sites that refuse split screen get an open-in-Chrome card, not a blank pane', async () => {
-    await page.fill('#webQ', 'facebook.com'); await page.press('#webQ', 'Enter');
-    assert.ok(await vis(page, '#webMsg'));
-    assert.match(await page.textContent('#webMsg'), /facebook\.com ไม่ยอมแสดงในจอแบ่ง/);
-    assert.equal(await page.getAttribute('#webFrame', 'src'), null);
-    await shot(page, '10-web-blocked');
-    const [pop] = await Promise.all([ctx.waitForEvent('page'), page.click('#webOpen')]);
-    assert.match(pop.url(), /facebook\.com/); await pop.close();
-    const r = await page.evaluate(() => ['m.facebook.com', 'www.tiktok.com', 'shopee.co.th', 'www.google.com', 'th.m.wikipedia.org', 'www.sanook.com', 'online.example.com'].map(h => __car.NO_FRAME.test(h)));
-    assert.deepEqual(r, [true, true, true, true, false, false, false]);
-  });
-  await test('PWA: manifest valid and service worker active', async () => {
-    const m = await (await page.request.get(BASE + 'manifest.webmanifest')).json();
-    assert.equal(m.id, './?app=car-screen-2', 'new app id so a broken old install does not block a fresh one');
-    assert.equal(m.display, 'standalone'); assert.deepEqual(m.display_override, ['fullscreen', 'standalone']);
-    assert.deepEqual(m.icons.map(i => i.purpose), ['any', 'any', 'maskable', 'maskable']);
-    for (const i of m.icons) assert.equal((await page.request.get(BASE + i.src)).status(), 200);
-    assert.equal((await page.request.get(BASE + '?source=pwa')).status(), 200, 'start_url loads');
-    const sw = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
-    assert.match(sw, /sw\.js$/);
-  });
-  await test('settings offer the Android app download, and the file is served', async () => {
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
-    assert.equal(await page.getAttribute('#sApk', 'href'), 'dist/car-screen.apk');
-    const r = await page.request.get(BASE + 'dist/car-screen.apk');
-    assert.equal(r.status(), 200);
-    assert.equal((await r.body()).subarray(0, 2).toString(), 'PK', 'it is a zip/APK');
-    await page.click('#sheet [data-close], #sheet .btn:has-text("รีเซ็ตหน้าจอ")');
-  });
-  await test('repair app clears caches and reloads, keeping settings', async () => {
-    await page.evaluate(() => caches.open('junk').then(c => c.put('/x', new Response('x'))));
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
-    await Promise.all([page.waitForURL(/repaired=/), page.click('#sRepair')]);
-    await page.waitForFunction(() => window.__car);
-    assert.equal(await page.evaluate(async () => (await caches.keys()).includes('junk')), false);
-    assert.ok(await page.evaluate(() => __car.st.extSeen.includes('netflix')), 'settings kept');
-  });
-  await test('no console errors in apps', () => assert.deepEqual(errors, []));
-  await ctx.close();
-}
-
-// ---------- engine too old to run app.js ----------
+// ---------- start-up problems ----------
 console.log('Startup problems');
 {
   const open = async (opts, appJs) => {
@@ -596,13 +158,10 @@ console.log('Startup problems');
   };
   {
     const { ctx, page } = await open({}, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: 'let x = a?.b ?? ;' }));
-    await test('a start-up error on a modern engine shows the real error, not "too old"', async () => {
+    await test('a start-up error shows the real error, not "too old"', async () => {
       await page.waitForSelector('#bootFail', { timeout: 5000 });
       const t = await page.textContent('#bootFail');
-      assert.match(t, /เกิดข้อผิดพลาดตอนเปิดแอป/);
-      assert.doesNotMatch(t, /เก่าเกินไป/);
-      assert.match(t, /ข้อผิดพลาด: .*app\.js:1/);
-      assert.ok(await vis(page, '#bootRetry') && await vis(page, '#bootRepair'));
+      assert.match(t, /เกิดข้อผิดพลาดตอนเปิดแอป/); assert.doesNotMatch(t, /เก่าเกินไป/); assert.match(t, /ข้อผิดพลาด: .*app\.js:1/);
     });
     await ctx.close();
   }
@@ -619,9 +178,8 @@ console.log('Startup problems');
     const { ctx, page } = await open({}, async r => { await new Promise(res => setTimeout(res, 8000)); await r.continue(); });
     await test('a slow connection is not reported as a failure', async () => {
       await page.waitForTimeout(7000);
-      assert.equal(await page.locator('#bootFail').count(), 0, 'no notice while still loading');
-      await page.waitForFunction(() => window.__car, null, { timeout: 10000 });
       assert.equal(await page.locator('#bootFail').count(), 0);
+      await page.waitForFunction(() => window.__car, null, { timeout: 10000 });
     });
     await ctx.close();
   }
@@ -632,8 +190,7 @@ console.log('Startup problems');
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
       await page.waitForFunction(() => navigator.serviceWorker.controller || (location.reload(), false), null, { timeout: 8000 }).catch(() => {});
       await page.waitForFunction(() => window.__car && navigator.serviceWorker.controller, null, { timeout: 8000 });
-      await ctx.setOffline(true);
-      await page.reload();
+      await ctx.setOffline(true); await page.reload();
       await page.waitForFunction(() => window.__car, null, { timeout: 5000 });
       await ctx.setOffline(false);
     });
@@ -641,190 +198,299 @@ console.log('Startup problems');
   }
 }
 
-// ---------- Android app 1.0.21+: Google Maps as a tab over the map ----------
-console.log('Google Maps tab');
+// ---------- layout ----------
+console.log('Layout');
 {
-  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 }, {}, () => {
-    window.__native = [];
-    const rec = (...a) => __native.push(a);
-    window.CarScreenNative = {
-      version: () => '1', appVersion: () => 99, inSplitScreen: () => false,
-      load: u => rec('load', u), rect: () => {}, stop: () => rec('stop'), back: () => {}, external: u => rec('external', u),
-      paneLoad: (id, u) => rec('paneLoad', id, u),
-      paneRect: (id, x, y, w, h, show) => rec('paneRect', id, Math.round(x), Math.round(y), Math.round(w), Math.round(h), show),
-      paneStop: id => rec('paneStop', id)
-    };
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
+  await test('landscape: map and apps side by side, map a little wider, bar below', async () => {
+    const m = await box(page, '#mapPane'), d = await box(page, '#mediaPane'), b = await box(page, '#bar');
+    assert.ok(m.x < d.x && Math.abs(m.y - d.y) < 2, 'side by side');
+    assert.ok(m.width > d.width, 'map wider');
+    assert.ok(b.y >= m.y + m.height, 'bar under the panes');
+    assert.equal(await page.locator('#dock .dock-app').count(), 5, 'app shortcuts in the bar');
   });
-  const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
-  const lastRect = id => page.evaluate(i => __native.filter(c => c[0] === 'paneRect' && c[1] === i).at(-1), id);
-  await page.click('.tile:has-text("เว็บ")');
-  await page.fill('#webQ', 'example.com'); await page.press('#webQ', 'Enter'); // something playing on the right
-  await page.mouse.click(300, 400);
-  await test('Google Maps search opens as a tab over the map, right side untouched', async () => {
+  await shot(page, '1-home');
+  await test('search and recenter fade when idle and return on touch', async () => {
+    await page.waitForFunction(() => document.body.classList.contains('idle'), null, { timeout: 7000 });
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('#search').evaluate(e => getComputedStyle(e).opacity), '0');
+    await page.mouse.click(300, 400);
+    assert.equal(await page.evaluate(() => document.body.classList.contains('idle')), false);
+  });
+  await test('bar buttons: map only, apps only, split, swap', async () => {
+    await page.click('#bar [data-mode="map"]'); assert.equal(await vis(page, '#mediaPane'), false);
+    await page.click('#bar [data-mode="media"]'); assert.equal(await vis(page, '#mapPane'), false);
+    await page.click('#bar [data-mode="split"]');
+    await page.click('#swap'); assert.ok((await box(page, '#mediaPane')).x < (await box(page, '#mapPane')).x, 'swapped');
+    await page.click('#swap');
+  });
+  await test('drag the divider to resize; remembered after reload', async () => {
+    const d = await box(page, '#divider');
+    await page.mouse.move(d.x + d.width / 2, d.y + 100); await page.mouse.down();
+    await page.mouse.move(1280 * 0.7, d.y + 100, { steps: 5 }); await page.mouse.up();
+    assert.ok((await box(page, '#mapPane')).width > 800);
+    const ratio = await page.evaluate(() => __car.st.ratio);
+    await page.reload(); await page.waitForFunction(() => window.__car);
+    assert.equal(await page.evaluate(() => __car.st.ratio), ratio);
+  });
+  await test('no console errors in layout', () => assert.deepEqual(errors, []));
+  await ctx.close();
+
+  const ph = await newPage({ width: 390, height: 844 }, { isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  await test('phone portrait: map above apps, nothing wider than the screen', async () => {
+    const m = await box(ph.page, '#mapPane'), d = await box(ph.page, '#mediaPane');
+    assert.ok(m.y < d.y && Math.abs(m.x - d.x) < 2, 'stacked');
+    assert.equal(await ph.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const b = await box(ph.page, '#bar');
+    assert.ok(b.x >= 0 && b.x + b.width <= 390);
+  });
+  await shot(ph.page, '2-phone');
+  await ph.ctx.close();
+}
+
+// ---------- search & navigation ----------
+console.log('Search & navigation');
+{
+  const { page, ctx, errors, calls, last } = await newPage({ width: 1280, height: 800 });
+  const setPos = async (p, speed = 12) => { await page.evaluate(([a, b, s]) => __setPos(a, b, s), [p[0], p[1], speed]); await page.waitForTimeout(120); };
+  await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
+  await test('typing a place opens Google Maps as a tab over the map', async () => {
     await page.fill('#q', 'ร้านข้าวมันไก่'); await page.press('#q', 'Enter');
-    await page.click('#results [data-gsearch]');
-    assert.equal((await last('paneLoad'))[1], 1, 'second browser view');
-    assert.match((await last('paneLoad'))[2], /google\.com\/maps\/search\//);
+    const l = await last('paneLoad', 1);
+    assert.match(l[2], /^https:\/\/www\.google\.com\/maps\/search\/%E0%B8%A3.*\/@[\d.]+,[\d.]+,14z$/);
     assert.ok(await vis(page, '#gmPanel'));
     await page.waitForTimeout(300);
-    const r = await lastRect(1), h = await page.locator('#gmHost').boundingBox(), m = await page.locator('#mapPane').boundingBox();
-    assert.deepEqual(r.slice(2, 6), [h.x, h.y, h.width, h.height].map(Math.round), 'Google Maps covers the map side');
-    assert.ok(h.x + h.width <= m.x + m.width + 1, 'stays inside the map side');
+    const r = await last('paneRect', 1), h = await box(page, '#gmHost'), m = await box(page, '#mapPane');
+    assert.deepEqual(r.slice(2, 6), [h.x, h.y, h.width, h.height].map(Math.round), 'browser view sits on #gmHost');
+    assert.ok(h.x + h.width <= m.x + m.width + 1, 'inside the map side');
     assert.equal(r[6], true);
-    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'load').length), 1, 'media side not reloaded');
   });
   await test('tabs switch between the map and Google Maps', async () => {
     await page.click('#gmToMap'); await page.waitForTimeout(250);
-    assert.equal((await lastRect(1))[6], false, 'Google Maps hidden on the map tab');
+    assert.equal((await last('paneRect', 1))[6], false);
     assert.ok(await vis(page, '#gmTab'));
     await page.click('#gmTab'); await page.waitForTimeout(250);
-    assert.equal((await lastRect(1))[6], true);
+    assert.equal((await last('paneRect', 1))[6], true);
   });
-  await test('choosing a place shows ไปที่นี่; pressing it closes Google Maps and routes there', async () => {
-    await page.evaluate(() => __gmUrl('https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!3d13.7512!4d100.5321'));
-    assert.ok(await vis(page, '#gmPick'));
+  await test('choosing a place → ไปที่นี่ closes Google Maps and shows routes', async () => {
+    await page.evaluate(() => __gmUrl('https://www.google.com/maps/search/x/@13.7,100.5,14z'));
+    assert.equal(await vis(page, '#gmPick'), false, 'search pages are not places');
+    await page.evaluate(u => __gmUrl(u), PLACE_URL);
     assert.equal(await page.textContent('#gmPickName'), 'ป้าแดง');
+    await shot(page, '3-gmaps-tab');
     await page.click('#gmPickGo');
-    assert.deepEqual(await last('paneStop'), ['paneStop', 1]);
+    assert.deepEqual(await last('paneStop', 1), ['paneStop', 1]);
     assert.equal(await vis(page, '#gmPanel'), false);
-    assert.equal(await vis(page, '#gmTab'), false);
-    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ป้าแดง');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    assert.equal(await page.textContent('#rcName'), 'ป้าแดง');
+    assert.match(await page.textContent('#rcMeta'), /1\.8 กม\. · 5 นาที/);
+    const line = await page.locator('.leaflet-overlay-pane path').last().boundingBox();
+    assert.ok(line && line.height > 100, 'route drawn');
   });
-  await test('starting navigation also closes an open Google Maps tab', async () => {
-    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
-    await page.click('#results [data-gsearch]');
-    await page.click('#gmToMap');
-    const n = await page.evaluate(() => __native.filter(c => c[0] === 'paneStop').length);
-    await page.waitForFunction(() => /กม\.|ม\./.test(document.querySelector('#rcMeta').textContent));
+  await test('alternative routes with toll badges, selectable', async () => {
+    assert.equal(await page.locator('.alt').count(), 2);
+    assert.match(await page.textContent('.alt >> nth=0'), /เสียค่าผ่านทาง.*ทางด่วน/s);
+    assert.match(await page.textContent('.alt >> nth=1'), /ไม่มีค่าผ่านทาง/);
+    await page.click('.alt >> nth=1');
+    assert.equal(await page.evaluate(() => __car.nav.route.distance), 2500);
+    await page.click('.alt >> nth=0');
+  });
+  await shot(page, '4-route');
+  await test('route options: avoid tolls + highways, falls back when the server cannot do both', async () => {
+    await page.click('#rcOpts');
+    await page.check('#oToll'); await page.check('#oMotorway'); await page.click('#oSave');
+    await page.waitForFunction(() => __car.nav.route?.distance === 2500);
+    assert.deepEqual(counts.exclude.slice(-2), ['toll,motorway', 'toll']);
+    assert.match(await page.textContent('#toast'), /เลี่ยงทางด่วนไม่ได้/);
+    assert.ok(await page.locator('#rcOpts.on').count());
+    await page.click('#rcOpts'); await page.uncheck('#oToll'); await page.uncheck('#oMotorway'); await page.click('#oSave');
+    await page.waitForFunction(() => __car.nav.route?.distance === 1760);
+  });
+  await test('start navigation → banner, ETA, voice', async () => {
     await page.click('#rcGo');
-    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'paneStop').length), n + 1);
+    assert.ok(await vis(page, '#navBanner'));
+    assert.equal(await page.textContent('#nbText'), 'เลี้ยวขวา เข้าสู่ถนนเพชรบุรี');
+    assert.match(await page.textContent('#nfEta'), /^ถึง \d{2}:\d{2}/);
+    assert.match((await page.evaluate(() => __said)).join('|'), /เริ่มนำทาง/);
+  });
+  await test('driving updates distance, speaks, moves to the next turn', async () => {
+    await setPos([13.7480, 100.5340]);
+    assert.match(await page.textContent('#nbDist'), /2[0-9]0 ม\./);
+    assert.match((await page.evaluate(() => __said)).join('|'), /อีก 200 เมตร เลี้ยวขวา/);
+    await setPos([13.7500, 100.5360]);
+    assert.equal(await page.textContent('#nbText'), 'เลี้ยวซ้าย เข้าสู่ซอยทดสอบ');
+  });
+  await shot(page, '5-navigating');
+  await test('going off-route reroutes; arriving ends navigation', async () => {
+    const before = counts.osrm;
+    for (const lng of [100.5300, 100.5299, 100.5298, 100.5297]) await setPos([13.7520, lng]);
+    await page.waitForTimeout(400);
+    assert.ok(counts.osrm > before);
+    await setPos([13.7500, 100.5380]); await setPos([13.7540, 100.5400]); await setPos([13.7559, 100.5400]);
+    await page.waitForSelector('#navBanner', { state: 'hidden' });
+    assert.match(await page.textContent('#toast'), /ถึงจุดหมาย/);
+  });
+  await test('picking a recent place closes an open Google Maps tab', async () => {
+    await page.mouse.click(600, 600);
+    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
+    await page.click('#gmToMap');
+    const n = (await calls('paneStop')).length;
+    await page.fill('#q', ''); await page.click('#q'); await page.waitForSelector('#results [data-recent]');
+    await page.click('#results [data-recent]');
+    assert.equal((await calls('paneStop')).length, n + 1, 'picking a recent place closes it');
     assert.equal(await vis(page, '#gmTab'), false);
   });
-  await shot(page, '11-gm-tab');
-  await test('no console errors with the Google Maps tab', () => assert.deepEqual(errors, []));
+  await test('pasting a Google Maps link, short link (resolved by the app) and coordinates', async () => {
+    await page.click('#rcClose');
+    await page.fill('#q', 'https://www.google.com/maps/place/Siam+Paragon/@13.7462,100.5347,17z/data=!3d13.746289!4d100.534878'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Siam Paragon');
+    await page.fill('#q', 'https://maps.app.goo.gl/AbCdEf'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Wat Arun');
+    await page.fill('#q', '13.75, 100.5'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => __car.nav.dest?.lat === 13.75);
+  });
+  await test('long-press on the map sets a destination', async () => {
+    await page.click('#rcClose');
+    await page.mouse.click(200, 500, { button: 'right' });
+    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ตำแหน่งที่เลือก');
+  });
+  await test('no console errors in navigation', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
 
-// ---------- Android app bridge (native side faked) ----------
-console.log('Android app');
+// ---------- apps side ----------
+console.log('Apps');
 {
-  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 }, {}, () => {
-    window.__native = [];
-    window.CarScreenNative = {
-      version: () => '1',
-      load: u => __native.push(['load', u]),
-      rect: (x, y, w, h, show) => __native.push(['rect', Math.round(x), Math.round(y), Math.round(w), Math.round(h), show]),
-      back: () => __native.push(['back']), stop: () => __native.push(['stop']),
-      external: u => __native.push(['external', u]),
-      mapsAdjacent: u => __native.push(['maps', u]),
-      inSplitScreen: () => false,
-      appVersion: () => 1,
-      httpGet: (id, u) => { __native.push(['http', u]); setTimeout(() => __http(id, 200, 'https://www.google.com/maps/place/Wat+Arun/@13.74,100.48,17z/data=!3d13.7437!4d100.4888', ''), 10); },
-      update: (u, h) => __native.push(['update', u, h])
-    };
+  const { page, ctx, errors, calls, last } = await newPage({ width: 1280, height: 800 });
+  await test('default apps: YouTube, Netflix, YT Music, Spotify, เว็บ', async () => {
+    assert.deepEqual(await page.$$eval('#tiles .tile:not(.add) span', s => s.map(x => x.textContent)), ['YouTube', 'Netflix', 'YT Music', 'Spotify', 'เว็บ']);
   });
-  const last = kind => page.evaluate(k => __native.filter(c => c[0] === k).at(-1), kind);
-  await test('in the app, only Google Maps is marked as opening outside', async () => {
-    assert.equal(await page.locator('.tile:has-text("Netflix") .ext').count(), 0);
-    assert.equal(await page.locator('.tile:has-text("Google Maps") .ext').count(), 1);
-  });
-  await test('YouTube tile opens the real m.youtube.com in the pane', async () => {
-    await page.click('.tile:has-text("YouTube")');
-    assert.deepEqual(await last('load'), ['load', 'https://m.youtube.com']);
-    await page.waitForFunction(() => __native.some(c => c[0] === 'rect' && c[5] === true));
-    const r = await last('rect'), f = await page.locator('#webFrame').boundingBox();
-    assert.deepEqual(r.slice(1, 5), [f.x, f.y, f.width, f.height].map(Math.round), 'native view sits exactly over the pane');
-  });
-  await test('pane follows the divider and hides under menus', async () => {
-    const d = await page.locator('#divider').boundingBox();
-    await page.mouse.move(d.x + d.width / 2, d.y + 100); await page.mouse.down(); await page.mouse.move(400, d.y + 100, { steps: 4 }); await page.mouse.up();
+  await test('YouTube opens the real m.youtube.com over the apps side', async () => {
+    await page.click('#tiles .tile:has-text("YouTube")');
+    assert.deepEqual(await last('paneLoad', 0), ['paneLoad', 0, 'https://m.youtube.com']);
     await page.waitForTimeout(300);
-    const f = await page.locator('#webFrame').boundingBox();
-    assert.equal((await last('rect'))[1], Math.round(f.x));
-    await page.click('#dockToggle'); await page.waitForTimeout(300);
-    assert.equal((await last('rect'))[5], false, 'hidden while the menu is open');
-    await page.mouse.click(5, 400); await page.waitForTimeout(300);
-    assert.equal((await last('rect'))[5], true);
+    const r = await last('paneRect', 0), h = await box(page, '#paneHost');
+    assert.deepEqual(r.slice(2, 6), [h.x, h.y, h.width, h.height].map(Math.round));
+    assert.equal(r[6], true);
+    assert.ok(await page.locator('#dock .dock-app.on').count(), 'shortcut marked active');
   });
-  await test('Netflix and Facebook load in the pane, no "open in Chrome"', async () => {
-    await page.click('#web .homeBtn'); await page.waitForTimeout(250);
-    assert.equal((await last('rect'))[5], false, 'hidden on the app grid');
-    await page.click('.tile:has-text("Netflix")');
-    assert.deepEqual(await last('load'), ['load', 'https://www.netflix.com/browse']);
-    assert.equal(await vis(page, '#sheetWrap'), false);
-    await page.fill('#webQ', 'facebook.com'); await page.press('#webQ', 'Enter');
-    assert.deepEqual(await last('load'), ['load', 'https://facebook.com']);
-    assert.equal(await vis(page, '#webMsg'), false);
+  await shot(page, '6-app-open');
+  await test('back to the app grid hides it; reopening resumes without reloading', async () => {
+    const n = (await calls('paneLoad')).length;
+    await page.click('#appHome'); await page.waitForTimeout(250);
+    assert.equal((await last('paneRect', 0))[6], false);
+    await page.click('#dock .dock-app >> nth=0'); await page.waitForTimeout(250);
+    assert.equal((await calls('paneLoad')).length, n, 'not reloaded');
+    assert.equal((await last('paneRect', 0))[6], true);
   });
-  await test('page URL from the pane shows in the address bar; ↗ and Maps open outside', async () => {
-    await page.evaluate(() => __paneUrl('https://m.facebook.com/home.php'));
-    assert.equal(await page.inputValue('#webQ'), 'https://m.facebook.com/home.php');
-    await page.click('#webPop');
-    assert.deepEqual(await last('external'), ['external', 'https://m.facebook.com/home.php']);
+  await test('address bar: page URL shows; words search Google; back, reload, open outside', async () => {
+    await page.evaluate(() => __paneUrl('https://m.youtube.com/watch?v=abc'));
+    assert.equal(await page.inputValue('#addrQ'), 'https://m.youtube.com/watch?v=abc');
+    await page.fill('#addrQ', 'ร้านกาแฟ'); await page.press('#addrQ', 'Enter');
+    assert.deepEqual(await last('paneLoad', 0), ['paneLoad', 0, 'https://www.google.com/search?q=' + encodeURIComponent('ร้านกาแฟ')]);
+    await page.click('#appBack'); assert.ok(await last('back'));
+    await page.click('#appOut'); assert.match((await last('external'))[1], /google\.com\/search/);
   });
-  await test('Google Maps navigation opens beside Car Screen with the avoid options', async () => {
-    await page.click('#web .homeBtn');
-    await page.click('[data-mode="split"]').catch(() => {});
-    await page.fill('#q', 'เซ็นทรัลเวิลด์'); await page.press('#q', 'Enter');
-    await page.click('#results .ritem');
-    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
-    await page.click('#rcOpts'); await page.check('#oToll'); await page.click('#oSave');
-    await page.waitForFunction(() => /เลี่ยง/.test(document.querySelector('#rcMeta').textContent));
-    await page.click('#rcGmaps');
-    assert.deepEqual(await last('maps'), ['maps', 'google.navigation:q=13.756,100.54&mode=d&avoid=t']);
-    assert.equal(await page.evaluate(() => __car.st.mode), 'media', 'Car Screen keeps only the media side');
-    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(5, 400);
+  await test('Netflix loads in the pane (no app, no Chrome)', async () => {
+    await page.click('#appHome');
+    const ext = (await calls('external')).length;
+    await page.click('#tiles .tile:has-text("Netflix")');
+    assert.deepEqual(await last('paneLoad', 0), ['paneLoad', 0, 'https://www.netflix.com/browse']);
+    assert.equal((await calls('external')).length, ext, 'nothing opened outside');
+    await page.click('#appHome');
   });
-  await test('setting: “เริ่มนำทาง” can use Google Maps', async () => {
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
-    await page.check('#sGnav'); await page.click('#sSave');
-    const n = await page.evaluate(() => __native.filter(c => c[0] === 'maps').length);
-    await page.click('#rcGo');
-    assert.equal(await page.evaluate(() => __native.filter(c => c[0] === 'maps').length), n + 1);
-    assert.equal(await vis(page, '#navBanner'), false, 'built-in navigation not started');
+  await test('edit: delete any app, undo, delete the open app closes it', async () => {
+    await page.click('#editApps');
+    assert.ok(await page.locator('#home.editing').count());
+    await page.click('#tiles .tile:has-text("YT Music") .del');
+    assert.equal(await page.locator('#tiles .tile:has-text("YT Music")').count(), 0);
+    assert.match(await page.textContent('#snackText'), /ลบ YT Music แล้ว/);
+    await page.click('#snackUndo');
+    assert.equal(await page.locator('#tiles .tile:has-text("YT Music")').count(), 1, 'undo puts it back');
+    await page.click('#tiles .tile:has-text("Netflix") .del');
+    assert.deepEqual(await last('paneStop', 0), ['paneStop', 0], 'open app closed');
+    assert.equal(await page.locator('#dock .dock-app[aria-label="Netflix"]').count(), 0, 'gone from the bar too');
+    await page.click('#editApps');
   });
-  await test('Google Maps tile opens the Maps app beside Car Screen', async () => {
-    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(5, 400);
-    await page.click('.tile:has-text("Google Maps")');
-    assert.deepEqual(await last('maps'), ['maps', 'https://www.google.com/maps']);
+  await shot(page, '7-edit');
+  await test('add an app; restore default apps from settings', async () => {
+    await page.click('#addApp');
+    await page.fill('#aName', 'Joox'); await page.fill('#aUrl', 'joox.com'); await page.click('#aSave');
+    await page.click('#tiles .tile:has-text("Joox")');
+    assert.deepEqual(await last('paneLoad', 0), ['paneLoad', 0, 'https://joox.com']);
+    await page.click('#appHome');
+    await page.click('#settingsBtn'); await page.click('#sRestoreApps');
+    assert.match(await page.textContent('#toast'), /เพิ่มกลับ 1 แอป/);
+    await page.click('#sheet [data-close]');
+    assert.equal(await page.locator('#tiles .tile:has-text("Netflix")').count(), 1);
   });
-  await test('app update: newer APK offered, downloaded with its checksum, progress shown', async () => {
+  await test('apps survive a reload', async () => {
+    await page.reload(); await page.waitForFunction(() => window.__car);
+    assert.equal(await page.locator('#tiles .tile:has-text("Joox")').count(), 1);
+  });
+  await test('no console errors on the apps side', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
+// ---------- settings ----------
+console.log('Settings');
+{
+  const { page, ctx, errors, last } = await newPage({ width: 1280, height: 800 });
+  await page.evaluate(() => { window.__appVer = 1; });
+  await test('settings: voice, split direction, layout reset', async () => {
+    await page.click('#settingsBtn');
+    await page.click('#sheet [data-layout="stack"]');
+    assert.ok(await page.locator('#app.stack').count());
+    await page.click('#sheet [data-layout="auto"]');
+    await page.locator('#sVoice').uncheck();
+    assert.equal(await page.evaluate(() => __car.st.voice), false);
+    await page.locator('#sVoice').check();
+    await shot(page, '8-settings');
+    await page.click('#sheet [data-close]');
+  });
+  await test('app update: newer APK offered and downloaded with its checksum', async () => {
+    await page.waitForTimeout(3300);
     const v = JSON.parse(await (await page.request.get(BASE + 'dist/version.json')).text());
-    assert.ok(v.versionCode > 1 && /^[0-9a-f]{64}$/.test(v.sha256), 'version.json published with checksum');
-    assert.ok(await page.locator('#dockToggle.badge').count(), 'menu handle shows a dot');
-    await page.click('#dockToggle'); await page.click('#settingsBtn');
+    assert.ok(await page.locator('#settingsBtn.badge').count(), 'gear shows a dot');
+    await page.click('#settingsBtn');
     assert.match(await page.textContent('#appUpd'), new RegExp('มีเวอร์ชันใหม่ ' + v.versionName.replace(/\./g, '\\.')));
     await page.click('#updGo');
     assert.deepEqual(await last('update'), ['update', BASE + 'dist/car-screen.apk', v.sha256]);
-    await page.evaluate(() => __appUpdate('confirm', 'กด “ติดตั้ง” เพื่อยืนยันการอัปเดต'));
-    assert.match(await page.textContent('#appUpd'), /ยืนยันการอัปเดต/);
     await page.evaluate(() => __appUpdate('error', 'ดาวน์โหลดไม่สำเร็จ (HTTP 500)'));
     assert.match(await page.textContent('#toast'), /ติดตั้งเองได้จาก .*car-screen\.apk/);
-    await page.mouse.click(5, 5);
   });
-  await test('short Google Maps links (maps.app.goo.gl) are resolved by the app', async () => {
-    await page.click('#dockToggle'); await page.click('[data-mode="split"]'); await page.mouse.click(300, 400);
-    await page.fill('#q', 'https://maps.app.goo.gl/AbCdEf'); await page.press('#q', 'Enter');
-    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'Wat Arun');
-    assert.deepEqual(await last('http'), ['http', 'https://maps.app.goo.gl/AbCdEf']);
+  await test('repair clears caches and reloads, keeping settings', async () => {
+    await page.evaluate(() => caches.open('junk').then(c => c.put('/x', new Response('x'))));
+    await Promise.all([page.waitForURL(/repaired=/), page.click('#sRepair')]);
+    await page.waitForFunction(() => window.__car);
+    assert.equal(await page.evaluate(async () => (await caches.keys()).includes('junk')), false);
+    assert.equal(await page.evaluate(() => __car.st.ratio), 55);
   });
-  await test('search with Google Maps in the pane, then navigate to the chosen place', async () => {
-    await page.click('#rcClose').catch(() => {});
-    await page.mouse.click(300, 400);
-    await page.fill('#q', 'ร้านข้าวมันไก่ป้าแดง'); await page.press('#q', 'Enter');
-    await page.waitForSelector('#results [data-gsearch]');
-    await page.click('#results [data-gsearch]');
-    assert.match((await last('load'))[1], /^https:\/\/www\.google\.com\/maps\/search\/%E0%B8%A3.*\/@[\d.]+,[\d.]+,14z$/);
-    await page.evaluate(() => __paneUrl('https://www.google.com/maps/search/x/@13.7,100.5,14z'));
-    assert.equal(await vis(page, '#gmCard'), false, 'no card for a plain search page');
-    await page.evaluate(() => __paneUrl('https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.7512!4d100.5321'));
-    assert.ok(await vis(page, '#gmCard'));
-    assert.equal(await page.textContent('#gmName'), 'ป้าแดง');
-    await page.click('#gmGo');
-    await page.waitForFunction(() => document.querySelector('#rcName').textContent === 'ป้าแดง');
-    assert.deepEqual(await page.evaluate(() => [__car.nav.dest.lat, __car.nav.dest.lng]), [13.7512, 100.5321]);
+  await test('no console errors in settings', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
+// ---------- older app & plain browser ----------
+console.log('Older app / browser');
+{
+  const { page, ctx, errors, last } = await newPage({ width: 1280, height: 800 }, { app: 20 });
+  await test('app 1.0.20: apps still open (old bridge), search asks to update', async () => {
+    await page.click('#tiles .tile:has-text("YouTube")');
+    assert.deepEqual(await last('load'), ['load', 'https://m.youtube.com']);
+    await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
+    assert.match(await page.textContent('#toast'), /อัปเดตแอป/);
   });
-  await test('no console errors in the Android app mode', () => assert.deepEqual(errors, []));
+  await test('no console errors with the older app', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+{
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 }, { app: 0 });
+  await test('plain browser: map works, apps side points to the Android app', async () => {
+    assert.ok(await vis(page, '#noNative'));
+    await page.click('#tiles .tile:has-text("YouTube")');
+    assert.match(await page.textContent('#toast'), /แอป Android/);
+  });
+  await test('no console errors in a plain browser', () => assert.deepEqual(errors, []));
   await ctx.close();
 }
 
