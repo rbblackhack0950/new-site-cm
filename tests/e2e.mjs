@@ -403,6 +403,17 @@ console.log('Charging & stops');
   const setPos = async (p, speed = 12) => { await page.evaluate(([a, b, s]) => __setPos(a, b, s), [p[0], p[1], speed]); await page.waitForTimeout(120); };
   const coordsIn = u => new URL(u).pathname.split('/').pop().split(';').length;
   await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
+  await test('charging stations are on the map without pressing ⚡; tap one to go or stop there', async () => {
+    await page.waitForFunction(() => document.querySelectorAll('.ev-pin.sm').length >= 1);
+    assert.equal(await page.locator('.ev-pin.sm').count(), 2, 'both bundled stations in view');
+    await page.locator('.ev-pin.sm').nth(0).click();
+    assert.match(await page.textContent('.ev-popup'), /CCS2.*ไปที่นี่/s);
+    await shot(page, '09-ev-pins');
+    await page.click('.ev-popup [data-pgo]');
+    await page.waitForFunction(() => /Local DC|PEA/.test(document.querySelector('#rcName').textContent));
+    await page.click('#rcClose');
+    await page.waitForFunction(() => document.querySelectorAll('.ev-pin.sm').length === 2);
+  });
   await test('⚡ near me: stations nearest first, with plugs and power; second server used when the first is busy', async () => {
     await page.click('#evBtn');
     await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 4); // bundled list first, OpenStreetMap joins
@@ -429,6 +440,15 @@ console.log('Charging & stops');
     await page.evaluate(() => { window.fetch = window.__fetch; });
     await page.click('#evX'); await page.click('#evBtn');
     await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 4);
+  });
+  await test('pins can be turned off in settings', async () => {
+    await page.click('#evX');
+    await page.click('#settingsBtn'); await page.uncheck('#sEvPins'); await page.keyboard.press('Escape');
+    await page.evaluate(() => document.querySelector('#sheetWrap [data-close]')?.click());
+    await page.waitForFunction(() => document.querySelectorAll('.ev-pin.sm').length === 0);
+    await page.click('#settingsBtn'); await page.check('#sEvPins'); await page.evaluate(() => document.querySelector('#sheetWrap [data-close]')?.click());
+    await page.waitForFunction(() => document.querySelectorAll('.ev-pin.sm').length === 2);
+    await page.click('#evBtn'); await page.waitForFunction(() => document.querySelectorAll('.ev-item').length === 4);
   });
   await test('fast DC filter', async () => {
     await page.click('#evDc');
@@ -580,7 +600,7 @@ console.log('Apps');
     }
     await page.waitForSelector('#tiles .tile:has-text("Plain") img.logo:not(.full)');
     assert.match(await page.getAttribute('#tiles .tile:has-text("Plain") img.logo', 'src'), /t1\.gstatic\.com\/faviconV2.*plain\.example/);
-    assert.equal(await page.locator('#tiles .tile:has-text("Plain") .face').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 255, 255)', 'small icons sit on white');
+    await page.waitForFunction(() => [...document.querySelectorAll('#tiles .tile')].find(t => /Plain/.test(t.textContent)).querySelector('.face') && getComputedStyle([...document.querySelectorAll('#tiles .tile')].find(t => /Plain/.test(t.textContent)).querySelector('.face')).backgroundColor === 'rgb(255, 255, 255)', null, { timeout: 3000 }); // small icons sit on white
     await page.waitForFunction(() => __car.st.apps.find(a => a.name === 'NoLogo')?.logoTried);
     assert.equal(await page.locator('#tiles .tile:has-text("NoLogo") img').count(), 0);
     assert.equal((await page.textContent('#tiles .tile:has-text("NoLogo") .face')).trim(), 'N', 'letter stays');

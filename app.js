@@ -26,7 +26,7 @@ const DEFAULT_APPS = [
   { id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', letter: 'S' },
   { id: 'web', name: 'เว็บ', url: '', color: '#2c2d31', icon: 'globe' }
 ];
-const DEF = { ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
+const DEF = { ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 // first run of this version: start from the defaults plus apps added earlier (st.custom)
 if (!Array.isArray(st.apps)) {
@@ -654,14 +654,46 @@ function nearRoute(p) {
   }
   return best;
 }
+// Charging stations always on the map (bundled DC list): zoomed in enough, the ones in view
+const PIN_ZOOM = 11, PIN_MAX = 150;
+const pinLayer = map ? L_.layerGroup().addTo(map) : null;
+let dcById = new Map();
+const stationChips = s => s.sockets.map(k => `<span class="chip${k.dc ? ' ok' : ''}">${esc(k.label)}${k.kw ? ' ' + k.kw + ' kW' : ''}</span>`).join('');
+async function updatePins() {
+  if (!map) return;
+  if (!st.evPins || ev.open || map.getZoom() < PIN_ZOOM) return pinLayer.clearLayers();
+  const local = await loadDc();
+  // clear only now: overlapping calls would otherwise each add a full set
+  pinLayer.clearLayers();
+  if (!local.length || ev.open || !st.evPins || map.getZoom() < PIN_ZOOM) return;
+  dcById = new Map(local.map(s => [s.id, s]));
+  const b = map.getBounds(), c = map.getCenter();
+  local.filter(s => b.contains([s.lat, s.lng])).map(s => [s, (s.lat - c.lat) ** 2 + (s.lng - c.lng) ** 2])
+    .sort((x, y) => x[1] - y[1]).slice(0, PIN_MAX).forEach(([s]) => {
+      const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin dc sm">${svg('bolt')}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) });
+      m.bindPopup(() => `<div class="pp-name">${esc(s.name)}</div><div class="muted">${esc(s.op)}</div><div class="chips">${stationChips(s)}</div>
+        <button class="btn primary" data-${nav.dest ? 'pstop' : 'pgo'}="${s.id}">${nav.dest ? 'แวะ' : 'ไปที่นี่'}</button>`, { className: 'ev-popup', closeButton: false, autoPanPadding: [20, 20] });
+      pinLayer.addLayer(m);
+    });
+}
+if (map) {
+  map.on('moveend', updatePins);
+  setTimeout(updatePins, 0);
+  $('#map').addEventListener('click', e => {
+    const b = e.target.closest('[data-pgo],[data-pstop]'); if (!b) return;
+    const s = dcById.get(b.dataset.pgo || b.dataset.pstop); if (!s) return;
+    map.closePopup();
+    return b.dataset.pstop ? addStop(evAsPlace(s)) : pickDest(evAsPlace(s));
+  });
+}
 function openEv(where) {
-  ev.open = true; ev.where = where === 'route' && nav.route ? 'route' : 'near';
+  ev.open = true; pinLayer?.clearLayers(); ev.where = where === 'route' && nav.route ? 'route' : 'near';
   $('#evCard').hidden = false; $('#mapPane').classList.add('ev-open');
   $('#evWhere [data-where="route"]').disabled = !nav.route;
   loadEv();
 }
 function closeEv() {
-  ev.open = false; ev.seq++;
+  ev.open = false; ev.seq++; updatePins();
   $('#evCard').hidden = true; $('#mapPane').classList.remove('ev-open');
   ev.markers.forEach(m => m.remove()); ev.markers = [];
 }
@@ -1094,6 +1126,7 @@ function settingsSheet() {
   openSheet(`<h2>ตั้งค่า</h2>
     <h3>การนำทาง</h3>
     <label class="set-row"><span class="t">เสียงนำทาง</span><input type="checkbox" class="toggle" id="sVoice" ${st.voice ? 'checked' : ''}></label>
+    <label class="set-row"><span class="t">แสดงที่ชาร์จบนแผนที่</span><input type="checkbox" class="toggle" id="sEvPins" ${st.evPins ? 'checked' : ''}></label>
     <h3>หน้าจอ</h3>
     <div class="set-row"><span class="t">แบ่งจอ</span><div class="seg">${segBtn('auto', 'อัตโนมัติ')}${segBtn('side', 'ซ้าย-ขวา')}${segBtn('stack', 'บน-ล่าง')}</div></div>
     <div class="set-row"><span class="t">ขนาดและตำแหน่งจอ</span><button class="btn" id="sResetLayout">คืนค่า</button></div>
@@ -1103,6 +1136,7 @@ function settingsSheet() {
     <div class="set-row"><div class="grow"><div class="t">ซ่อมแอป</div><div class="muted">ล้างไฟล์ที่เก็บไว้แล้วโหลดใหม่ ใช้เมื่อเปิดไม่ขึ้นหรือค้าง</div></div><button class="btn" id="sRepair">ซ่อม</button></div>
     <div class="sheet-actions"><button class="btn primary" data-close>เสร็จ</button></div>`, s => {
     s.querySelector('#sVoice').onchange = e => { st.voice = e.target.checked; save(); setVoiceIcon(); };
+    s.querySelector('#sEvPins').onchange = e => { st.evPins = e.target.checked; save(); updatePins(); };
     s.querySelectorAll('[data-layout]').forEach(b => b.onclick = () => {
       st.stack = { auto: null, side: false, stack: true }[b.dataset.layout]; save(); applyLayout();
       s.querySelectorAll('[data-layout]').forEach(x => x.classList.toggle('on', x === b));
