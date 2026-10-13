@@ -745,23 +745,11 @@ function ytParse(input) {
 const fmtSecs = s => { if (!s) return ''; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
 const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
 
-async function ytSearch(q) {
-  if (st.ytKey || ytSignedIn()) {
-    const j = await ytApi('search', { part: 'snippet', type: 'video', maxResults: 25, q, videoEmbeddable: 'true', regionCode: 'TH', relevanceLanguage: 'th' });
-    return j.items.filter(x => x.id?.videoId).map(x => ({ id: x.id.videoId, title: decode(x.snippet.title), author: decode(x.snippet.channelTitle) }));
-  }
-  const enc = encodeURIComponent(q);
-  const tries = [
-    ...PIPED.map(b => async () => (await getJSON(`${b}/search?q=${enc}&filter=videos`, 7000)).items
-      .filter(x => x.url && (x.type || 'stream') === 'stream')
-      .map(x => ({ id: (x.url.match(/v=([\w-]{11})/) || [])[1], title: x.title, author: x.uploaderName, dur: x.duration }))),
-    ...INVID.map(b => async () => (await getJSON(`${b}/api/v1/search?q=${enc}&type=video`, 7000))
-      .filter(x => x.type === 'video')
-      .map(x => ({ id: x.videoId, title: x.title, author: x.author, dur: x.lengthSeconds })))
-  ];
-  // start with the source that worked last time
-  const order = tries.map((f, i) => i), first = store.get('carscreen.ytsrc', 0);
-  order.sort((a, b) => (a === first ? -1 : b === first ? 1 : a - b));
+// try each public Piped/Invidious server, starting with the one that worked last time
+async function viaPublic(piped, invid) {
+  const tries = [...PIPED.map(b => () => piped(b)), ...INVID.map(b => () => invid(b))];
+  const first = store.get('carscreen.ytsrc', 0);
+  const order = tries.map((_, i) => i).sort((a, b) => (a === first ? -1 : b === first ? 1 : a - b));
   for (const i of order) {
     try {
       const r = (await tries[i]()).filter(x => x.id);
@@ -769,6 +757,48 @@ async function ytSearch(q) {
     } catch {}
   }
   throw new Error('no-source');
+}
+const pipedItems = list => (list || []).filter(x => x.url && (x.type || 'stream') === 'stream')
+  .map(x => ({ id: (x.url.match(/v=([\w-]{11})/) || [])[1], title: x.title, author: x.uploaderName, dur: x.duration }));
+const invItems = list => (list || []).filter(x => x.videoId && (x.type || 'video') === 'video')
+  .map(x => ({ id: x.videoId, title: x.title, author: x.author, dur: x.lengthSeconds }));
+
+async function ytSearch(q) {
+  if (st.ytKey || ytSignedIn()) {
+    const j = await ytApi('search', { part: 'snippet', type: 'video', maxResults: 25, q, videoEmbeddable: 'true', regionCode: 'TH', relevanceLanguage: 'th' });
+    return j.items.filter(x => x.id?.videoId).map(x => ({ id: x.id.videoId, title: decode(x.snippet.title), author: decode(x.snippet.channelTitle) }));
+  }
+  const enc = encodeURIComponent(q);
+  return viaPublic(
+    async b => pipedItems((await getJSON(`${b}/search?q=${enc}&filter=videos`, 7000)).items),
+    async b => invItems(await getJSON(`${b}/api/v1/search?q=${enc}&type=video`, 7000)));
+}
+// videos YouTube shows next to this one (the official API no longer offers this, so public servers only)
+const ytRelated = id => viaPublic(
+  async b => pipedItems((await getJSON(`${b}/streams/${id}`, 8000)).relatedStreams),
+  async b => invItems((await getJSON(`${b}/api/v1/videos/${id}?fields=recommendedVideos`, 8000)).recommendedVideos));
+async function ytTrending() {
+  if (st.ytKey || ytSignedIn()) {
+    const j = await ytApi('videos', { part: 'snippet,contentDetails', chart: 'mostPopular', regionCode: 'TH', maxResults: 30 });
+    return j.items.map(x => ({ id: x.id, title: x.snippet.title, author: x.snippet.channelTitle, dur: isoSecs(x.contentDetails.duration) }));
+  }
+  return viaPublic(
+    async b => pipedItems(await getJSON(`${b}/trending?region=TH`, 8000)),
+    async b => invItems(await getJSON(`${b}/api/v1/trending?region=TH`, 8000)));
+}
+// "แนะนำ": related to what you watched lately, mixed with new uploads from subscriptions and trending in Thailand
+async function ytRecommended() {
+  if (yt.rec && Date.now() - yt.rec.at < 10 * 60e3) return yt.rec.items;
+  const seeds = st.ytHistory.filter(v => v.id).slice(0, 2).map(v => v.id);
+  const jobs = [...seeds.map(id => ytRelated(id)), ytSignedIn() ? ytSubsFeed() : null, ytTrending()].filter(Boolean);
+  const lists = (await Promise.allSettled(jobs)).filter(r => r.status === 'fulfilled').map(r => r.value);
+  const seen = new Set(st.ytHistory.slice(0, 15).map(v => v.id)), out = [];
+  // interleave so every source shows up near the top
+  for (let i = 0; out.length < 60 && lists.some(l => i < l.length); i++)
+    for (const l of lists) { const v = l[i]; if (v && !seen.has(v.id)) { seen.add(v.id); out.push(v); } }
+  if (!out.length) throw new Error('no-source');
+  yt.rec = { at: Date.now(), items: out };
+  return out;
 }
 
 function vItem(v, i, on) {
@@ -784,10 +814,10 @@ function renderList(items, label) {
 }
 function ytShowIdle() {
   if (yt.cur || $('#ytList')._items?.length) return;
-  ytTab(yt.tab || 'recent');
+  ytTab(yt.tab || 'rec');
 }
 // ---------- Home tabs: recent, and with a Google sign-in: subscriptions, liked, playlists ----------
-const TABS = { recent: 'ล่าสุด', subs: 'ติดตาม', liked: 'ชอบ', lists: 'เพลย์ลิสต์' };
+const TABS = { rec: 'แนะนำ', recent: 'ล่าสุด', subs: 'ติดตาม', liked: 'ชอบ', lists: 'เพลย์ลิสต์' };
 function tabsBar(active) {
   return `<div class="chips">${Object.entries(TABS).map(([k, t]) => `<button class="chip-btn${k === active ? ' on' : ''}" data-tab="${k}">${t}</button>`).join('')}
     <button class="chip-btn acct" data-tab="account">${svg('person')}${ytSignedIn() ? 'บัญชี' : 'เข้าสู่ระบบ'}</button></div>`;
@@ -801,6 +831,12 @@ async function ytTab(tab) {
     l.innerHTML = head + (items.length ? items.map((v, i) => vItem(v, i, yt.cur && v.id && v.id === yt.cur.id)).join('') : `<div class="empty">${empty}</div>`);
   };
   if (tab === 'recent') return show(st.ytHistory, `${svg('play', ' style="width:48px;height:48px;color:#ff0033"')}<div>ค้นหาวิดีโอ หรือวางลิงก์ YouTube ในช่องด้านบน</div>`);
+  if (tab === 'rec') {
+    l._items = []; l.innerHTML = head + '<div class="empty">กำลังโหลดวิดีโอแนะนำ…</div>';
+    try { const items = await ytRecommended(); if (yt.tab === tab) show(items, ''); }
+    catch { if (yt.tab === tab) { l._items = []; l.innerHTML = head + `<div class="empty"><div>โหลดวิดีโอแนะนำไม่ได้ในตอนนี้</div><div class="sub">เข้าสู่ระบบหรือใส่ API key ในตั้งค่าเพื่อให้โหลดได้เสถียร</div><button class="btn" data-tab="rec">ลองอีกครั้ง</button></div>`; } }
+    return;
+  }
   if (!ytSignedIn() && !st.ytClientId) {
     l._items = [];
     l.innerHTML = head + `<div class="empty"><div>เข้าสู่ระบบด้วย Google เพื่อดูช่องที่ติดตาม วิดีโอที่ชอบ และเพลย์ลิสต์ของคุณ</div><button class="btn primary" data-tab="account">ตั้งค่าบัญชี</button></div>`;
@@ -844,7 +880,7 @@ $('#ytList').addEventListener('click', e => {
   yt.queue = items.filter(x => x.id); yt.idx = yt.queue.indexOf(v);
   ytPlay(v);
 });
-$('#ytQ').addEventListener('input', () => { if (!$('#ytQ').value && !yt.cur) { $('#ytList')._items = []; ytTab(yt.tab || 'recent'); } });
+$('#ytQ').addEventListener('input', () => { if (!$('#ytQ').value && !yt.cur) { $('#ytList')._items = []; ytTab(yt.tab || 'rec'); } });
 function openList(on) { $('#yt').classList.toggle('list-open', on); }
 $('#ytListBtn').onclick = () => openList(!$('#yt').classList.contains('list-open'));
 // video fills its own pane; the way back is in the ⋯ menu on the divider so nothing covers the player
@@ -881,6 +917,8 @@ async function ytPlay(v) {
   $('#yt').classList.add('playing'); $('#ytStage').hidden = false; $('#ytErr').hidden = true; $('#ytListBtn').hidden = $('#ytFs').hidden = false;
   if (yt.queue.length > 1) renderList(yt.queue); else openList(false);
   if (v.id) addHistory(v);
+  // near the end of the list: fetch what plays next so the list shows it and autoplay continues
+  if (v.id && yt.idx >= yt.queue.length - 2) extendQueue();
   // fs: 0 removes YouTube's own fullscreen, which would cover the map; #ytFs fills the pane instead
   const vars = { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, fs: 0, origin: location.origin, start: v.start || 0 };
   try {
@@ -922,8 +960,21 @@ function refreshTitle() {
     renderList(yt.queue);
   }
 }
-function ytNext() {
+async function ytNext() {
+  if (!(yt.idx >= 0 && yt.idx < yt.queue.length - 1)) await extendQueue();
   if (yt.idx >= 0 && yt.idx < yt.queue.length - 1) { yt.idx++; ytPlay(yt.queue[yt.idx]); }
+}
+// add videos related to the current one to the end of the queue ("ถัดไป")
+async function extendQueue() {
+  const cur = yt.cur; if (!cur?.id) return;
+  try {
+    const rel = (await ytRelated(cur.id)).filter(v => !yt.queue.some(q => q.id === v.id)).slice(0, 15);
+    if (yt.cur !== cur || !rel.length) return;
+    if (!yt.queue.includes(cur)) { yt.queue = [cur]; yt.idx = 0; }
+    yt.queue = [...yt.queue, ...rel];
+    renderList(yt.queue, 'กำลังเล่นและถัดไป');
+    $('#ytErrNext').hidden = $('#ytErr').hidden;
+  } catch {}
 }
 function ytError(code) {
   const embedOff = [101, 150, 152, 153].includes(code);

@@ -95,7 +95,16 @@ async function newPage(viewport, extra = {}) {
     if (u.includes('nominatim.openstreetmap.org')) { hit('nominatim'); return json(PLACES); }
     if (u.includes('youtube.com/iframe_api')) return route.fulfill({ status: 200, contentType: 'text/javascript', body: YT_STUB });
     if (u.includes('pipedapi.kavin.rocks')) { hit('piped0'); return route.fulfill({ status: 502, body: 'down' }); }
-    if (u.includes('api.piped.private.coffee')) { hit('piped1'); return json(PIPED); }
+    if (u.includes('api.piped.private.coffee')) {
+      hit('piped1'); const p = new URL(u).pathname;
+      if (p.startsWith('/streams/')) { hit('related'); return json({ relatedStreams: [
+        { type: 'stream', url: '/watch?v=RRRRRRRRRR1', title: 'Related one', uploaderName: 'R', duration: 200 },
+        { type: 'stream', url: '/watch?v=RRRRRRRRRR2', title: 'Related two', uploaderName: 'R', duration: 210 }] }); }
+      if (p === '/trending') { hit('trending'); return json([
+        { type: 'stream', url: '/watch?v=TTTTTTTTTT1', title: 'Trend one', uploaderName: 'T', duration: 300 },
+        { type: 'stream', url: '/watch?v=TTTTTTTTTT2', title: 'Trend two', uploaderName: 'T', duration: 310 }]); }
+      return json(PIPED);
+    }
     if (u.includes('googleapis.com/youtube')) {
       const auth = route.request().headers().authorization, p = new URL(u).pathname.split('/').pop();
       if (auth) { if (auth !== 'Bearer TOK') return route.fulfill({ status: 401, body: '' }); hit('bearer'); }
@@ -342,11 +351,16 @@ console.log('YouTube');
 {
   const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
   await page.click('.tile:has-text("YouTube")');
+  await test('YouTube opens on recommendations (trending in Thailand when nothing watched yet)', async () => {
+    await page.waitForSelector('.vitem:has-text("Trend one")');
+    assert.ok(await page.locator('[data-tab="rec"].on').count());
+    assert.equal(counts.trending, 1);
+  });
   await test('search falls back to a working source and lists videos only', async () => {
     await page.fill('#ytQ', 'เพลงขับรถ'); await page.press('#ytQ', 'Enter');
     await page.waitForSelector('.vitem');
     assert.equal(await page.locator('.vitem').count(), 2);
-    assert.equal(counts.piped0, 1); assert.equal(counts.piped1, 1);
+    assert.ok(counts.piped0 >= 1 && counts.piped1 >= 1, 'first server down, second used');
     assert.match(await page.textContent('.vitem .dur'), /1:00:05/);
   });
   await shot(page, '5-yt-results');
@@ -373,6 +387,12 @@ console.log('YouTube');
     await page.fill('#ytQ', 'https://youtu.be/dQw4w9WgXcQ'); await page.press('#ytQ', 'Enter');
     assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['load', 'dQw4w9WgXcQ']);
     assert.equal(await vis(page, '#ytErr'), false);
+  });
+  await test('after the last video, related videos play next', async () => {
+    await page.waitForFunction(() => __car.yt.queue.some(v => v.id === 'RRRRRRRRRR1'));
+    assert.match(await page.textContent('#ytList'), /Related one/);
+    await page.evaluate(() => __yt.players[0].o.events.onStateChange({ data: 0 }));
+    assert.deepEqual(await page.evaluate(() => __yt.calls.at(-1)), ['load', 'RRRRRRRRRR1']);
   });
   await test('playlist link loads playlist', async () => {
     await page.fill('#ytQ', 'https://www.youtube.com/playlist?list=PLxyz'); await page.press('#ytQ', 'Enter');
@@ -418,8 +438,16 @@ console.log('YouTube');
   });
   await test('history shows after reload', async () => {
     await page.reload(); await page.waitForFunction(() => window.__car);
-    assert.ok(await page.locator('[data-tab="recent"].on').count(), 'recent tab open');
+    // "Related one" was watched in the previous test, so only "Related two" should be suggested;
+    // an API key is set by now, so trending comes from the API's mostPopular chart (mocked as "Liked one")
+    await page.waitForSelector('.vitem:has-text("Related two")');
+    const txt = await page.textContent('#ytList');
+    assert.match(txt, /Liked one/, 'recommendations mix related and trending');
+    assert.doesNotMatch(txt, /Related one|Lofi drive/, 'already-watched videos are left out');
+    await page.click('[data-tab="recent"]');
     assert.ok(await page.locator('#ytList .vitem').count() >= 2, 'watched videos listed');
+    await shot(page, '9-yt-recommended');
+    await page.click('[data-tab="rec"]');
   });
   await test('YouTube sign-in: subscriptions, liked videos, playlists', async () => {
     await page.click('[data-tab="subs"]');
