@@ -642,6 +642,22 @@ console.log('Driving view');
     await page.waitForFunction(() => __car.nav.stops.length === 1 && __car.nav.stops[0].name === 'ปตท. สามย่าน');
     assert.equal(new URL(counts.osrmUrls.at(-1)).pathname.split('/').pop().split(';').length, 3, 'rerouted through the stop');
   });
+  await test('panel, turn banner and trip bar never overlap, even with a long list, and the panel can be closed', async () => {
+    const overlap = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    for (const [w, h] of [[1280, 800], [1000, 560], [1920, 720]]) {
+      await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(200);
+      await page.click('#nfEv'); await page.waitForSelector('#evCats [data-cat]');
+      await page.evaluate(() => { document.querySelector('#evList').innerHTML = Array.from({ length: 30 }, (_, i) => `<div class="ev-item"><div class="grow"><div class="t">สถานี ${i}</div><div class="muted">รายละเอียด</div><div class="chips"><span class="chip">CCS2</span></div></div><button class="btn primary">แวะ</button></div>`).join(''); });
+      const [bn, card, ft, m] = [await box(page, '#navBanner'), await box(page, '#evCard'), await box(page, '#navFoot'), await box(page, '#mapPane')];
+      assert.ok(!overlap(bn, card) && !overlap(card, ft) && !overlap(bn, ft), `${w}x${h}: banner ${bn.y}-${bn.y + bn.height}, card ${card.y}-${card.y + card.height}, bar ${ft.y}-${ft.y + ft.height}`);
+      assert.ok(card.y >= m.y && card.y + card.height <= m.y + m.height, 'panel inside the map');
+      const x = await box(page, '#evX');
+      assert.equal(await page.evaluate(([cx, cy]) => document.elementFromPoint(cx, cy).closest('#evX') !== null, [x.x + x.width / 2, x.y + x.height / 2]), true, 'the close button is the topmost thing there');
+      await shot(page, `16-panel-${w}`);
+      await page.click('#evX'); assert.equal(await vis(page, '#evCard'), false);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
   await test('categories switch: the chargers list comes back with its DC filter', async () => {
     await page.click('#nfEv'); await page.click('#evCats [data-cat="ev"]');
     await page.waitForFunction(() => document.querySelectorAll('.ev-item').length >= 1);

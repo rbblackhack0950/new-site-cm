@@ -85,18 +85,18 @@ body.idle .autohide{opacity:0;pointer-events:none}
 .leaflet-control-attribution{background:rgba(0,0,0,.5)!important;color:#777!important;font-size:10px}
 .leaflet-control-attribution a{color:#999!important}
 .leaflet-control-zoom{display:none}
-#search{top:14px;left:14px;width:min(420px,calc(100% - 28px));height:54px;display:flex;align-items:center;gap:10px;padding:0 6px 0 16px;border-radius:16px;background:rgba(16,17,19,.97);border:1px solid var(--line);color:var(--muted)}
+#search{width:100%;height:54px;display:flex;align-items:center;gap:10px;padding:0 6px 0 16px;border-radius:16px;background:rgba(16,17,19,.97);border:1px solid var(--line);color:var(--muted)}
 #search input{flex:1;min-width:0;height:100%;border:0;background:none;color:var(--fg);font:inherit;font-size:18px;outline:none}
 #search input::placeholder{color:var(--muted)}
 #search input::-webkit-search-cancel-button{display:none}
 body.idle #search.autohide{transform:translateY(-8px)}
-#results{top:76px;left:14px;width:min(420px,calc(100% - 28px));max-height:calc(100% - 92px);overflow:auto;padding:6px;border-radius:16px;background:rgba(16,17,19,.97);border:1px solid var(--line)}
+#results{position:absolute;z-index:3;top:60px;left:0;right:0;max-height:min(60vh,440px);overflow:auto;padding:6px;border-radius:16px;background:rgba(16,17,19,.97);border:1px solid var(--line)}
 .list .label{padding:10px 12px 4px;font-size:13px;color:var(--muted)}
 .ritem{display:flex;gap:14px;align-items:center;width:100%;text-align:left;padding:12px;border-radius:12px}
 .ritem:active{background:var(--raise)}
 .ritem .ic{color:var(--muted)}
 .ritem .t{font-size:16px;font-weight:500}
-#routeCard{left:14px;bottom:14px;width:min(420px,calc(100% - 28px));padding:18px;display:flex;flex-direction:column;gap:14px}
+#routeCard{width:100%;max-width:420px;padding:18px;display:flex;flex-direction:column;gap:14px}
 .rc-head{display:flex;gap:8px;align-items:flex-start}
 .rc-name{font-size:22px;font-weight:600;line-height:1.2}
 #rcMeta{font-variant-numeric:tabular-nums;margin-top:4px}
@@ -109,25 +109,24 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .chip.warn{background:rgba(255,179,64,.14);color:var(--warn)}
 .chip.ok{background:rgba(48,209,88,.12);color:var(--ok)}
 #rcOpts.on{color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}
-#navBanner{position:absolute;z-index:600;top:14px;left:14px;width:min(460px,calc(100% - 28px));border-radius:20px;overflow:hidden;background:#000;border:1px solid var(--line);box-shadow:0 10px 40px rgba(0,0,0,.6)}
+#navBanner{width:100%;border-radius:20px;overflow:hidden;background:#000;border:1px solid var(--line);box-shadow:0 10px 40px rgba(0,0,0,.6)}
 .nb-main{display:flex;gap:16px;align-items:center;padding:18px 20px}
 .nb-arrow svg[aria-hidden]{width:56px;height:56px}
 .nb-dist{font-size:34px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.05;letter-spacing:-.01em}
 .nb-text{font-size:18px;color:#d1d1d6;margin-top:2px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .nb-then{display:flex;align-items:center;gap:8px;padding:10px 20px;border-top:1px solid var(--line);color:var(--muted);font-size:15px}
 .nb-then svg[aria-hidden]{width:20px;height:20px}
-#navFoot{z-index:600;left:14px;bottom:14px;width:min(540px,calc(100% - 28px));display:flex;align-items:center;gap:8px;padding:10px 10px 10px 14px}
+#navFoot{width:100%;display:flex;align-items:center;gap:8px;padding:10px 10px 10px 14px}
 #speed{display:flex;flex-direction:column;align-items:center;min-width:58px;padding-right:12px;border-right:1px solid var(--line)}
 #speed b{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
 #speed small{font-size:10px;color:var(--muted)}
 .nf-eta{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
-.fab{right:14px;bottom:14px;width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:rgba(16,17,19,.97);border:1px solid var(--line);color:var(--fg)}
+.fab{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:rgba(16,17,19,.97);border:1px solid var(--line);color:var(--fg)}
 #recenter.off{color:var(--accent)}
 #mapPane.has-card #recenter{display:none}
-#evBtn{bottom:82px;color:var(--ok)}
-#mapPane.has-card #evBtn{bottom:14px}
+#evBtn{color:var(--ok)}
 #mapPane.navigating #evBtn,#mapPane.ev-open #evBtn,#mapPane.ev-open #recenter,#mapPane.ev-open #routeCard{display:none}
-#stopMode{top:128px;left:14px;color:var(--fg)}
+#stopMode{color:var(--fg)}
 #stopMode svg[aria-hidden]{color:var(--accent)}
 #stopMode .ic:last-child svg{color:var(--muted)}
 .stops{display:flex;flex-direction:column;gap:6px}
@@ -135,12 +134,12 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .stop{display:flex;align-items:center;gap:10px;padding:8px 6px 8px 12px;border-radius:12px;background:var(--surface-2)}
 .stop .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--ok);color:#000;font-size:13px;font-weight:700;display:grid;place-items:center}
 .stop .icon-btn{width:36px;height:36px}
-#evCard{left:14px;bottom:14px;width:min(440px,calc(100% - 28px));max-height:calc(100% - 92px);padding:14px;display:flex;flex-direction:column;gap:10px}
+#evCard{flex:0 1 auto;min-height:0;width:100%;max-width:440px;padding:14px;display:flex;flex-direction:column;gap:10px}
 .ev-head{display:flex;align-items:center;gap:10px}
 .ev-ic{color:var(--ok)}
 .ev-filters{flex-wrap:wrap}
 #evDc[aria-pressed=true]{background:rgba(48,209,88,.16);border-color:var(--ok);color:var(--ok)}
-.ev-list{flex:1;min-height:60px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.ev-list{flex:1 1 auto;min-height:60px;overflow:auto;display:flex;flex-direction:column;gap:8px}
 .ev-item{display:flex;gap:12px;align-items:center;padding:12px;border-radius:14px;background:var(--surface-2);border:1.5px solid transparent}
 .ev-item.on{border-color:var(--ok)}
 .ev-item .t{font-size:16px;font-weight:600}
@@ -150,9 +149,7 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .ev-pin svg[aria-hidden]{width:18px;height:18px}
 .ev-pin.dc{background:#ffd60a}
 .stop-pin{width:26px;height:26px;border-radius:50%;background:var(--ok);border:2px solid #000;color:#000;font-weight:700;font-size:13px;display:grid;place-items:center}
-#mapPane.navigating #recenter{bottom:104px}
 #mapPane.navigating #search,#mapPane.navigating #results,#mapPane.navigating #gmTab{display:none}
-#gmTab{top:80px;left:14px}
 .me{width:22px;height:22px;position:relative}
 .me i{position:absolute;inset:3px;border-radius:50%;background:var(--accent);border:3px solid #fff;box-shadow:0 0 0 6px rgba(62,106,225,.3)}
 .me b{position:absolute;left:50%;top:-14px;width:0;height:0;margin-left:-8px;border:8px solid transparent;border-bottom:14px solid rgba(62,106,225,.75);transform-origin:8px 25px;display:none}
@@ -230,7 +227,7 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 .adv{display:flex;flex-wrap:wrap;gap:8px;padding:14px 0 0}
 .adv .btn{flex:1 1 auto;min-width:130px}
 /* driving view: compass, and the car as an arrow while navigating */
-#compass{top:14px;right:14px;bottom:auto;width:48px;height:48px}
+#compass{flex:none;margin-left:auto;width:48px;height:48px}
 #compass svg[aria-hidden]{width:26px;height:26px;transition:transform .1s linear}
 .me .car{display:none}
 .me.nav i,.me.nav b{display:none}
@@ -249,5 +246,21 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 .st-row .ic{width:34px;justify-content:center}
 .st-sum{margin:2px 0 4px}
 #navFoot .icon-btn{width:42px;height:42px;flex:none}
-/* while navigating the list sits above the bottom card, not under it */
-#mapPane.navigating #evCard{bottom:96px;max-height:calc(100% - 226px)}
+
+/* ---------- Map overlay: one column, so nothing can sit on top of anything else ---------- */
+#mapUI{position:absolute;inset:0;z-index:500;display:flex;flex-direction:column;gap:10px;padding:14px;pointer-events:none}
+#search,#results,#navBanner,.ui-chips>*,#compass,#evCard,#routeCard,#navFoot,.ui-fabs>*{pointer-events:auto}
+.ui-top{flex:none;display:flex;align-items:flex-start;gap:10px}
+.ui-col{position:relative;flex:1;min-width:0;max-width:460px}
+.ui-chips{display:flex;flex-wrap:wrap;gap:8px}
+.ui-chips>:not([hidden]){margin-top:10px}
+.ui-gap{flex:1 1 0;min-height:0}
+.ui-bottom{flex:none;display:flex;align-items:flex-end;gap:10px}
+.ui-stack{flex:1;min-width:0;max-width:540px;display:flex;flex-direction:column;gap:10px}
+.ui-fabs{margin-left:auto;display:flex;flex-direction:column;gap:12px}
+.ev-foot{flex:none;display:flex;flex-direction:column;align-items:center}
+/* short screens: keep the panel's own rows at full size, let only the list give way */
+.ev-head,.ev-cats,.ev-filters{flex:none}
+.ev-list{min-height:88px}
+#mapPane.ev-open #nbThen{display:none}
+@media (max-height:640px){.ev-credit{display:none}}

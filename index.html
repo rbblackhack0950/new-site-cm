@@ -17,81 +17,101 @@
     <section id="mapPane" class="pane">
       <div id="map"></div>
 
-      <form id="search" class="float autohide" autocomplete="off">
-        <span class="ic" data-i="search"></span>
-        <input id="q" type="search" placeholder="ไปที่ไหน" enterkeyhint="search" aria-label="ค้นหาปลายทาง">
-        <button type="button" id="qClear" class="icon-btn" hidden aria-label="ล้าง" data-i="close"></button>
-        <span class="quick">
-          <button type="button" id="qHome" class="icon-btn" aria-label="บ้าน" data-i="home"></button>
-          <button type="button" id="qWork" class="icon-btn" aria-label="ที่ทำงาน" data-i="work"></button>
-        </span>
-      </form>
-      <div id="results" class="float list" hidden></div>
+      <!-- Everything over the map lives in one column (top: search or turn banner, middle: panel, bottom: route card or trip bar),
+           so nothing can sit on top of anything else. The column ignores touches except on the controls themselves. -->
+      <div id="mapUI">
+        <div class="ui-top">
+          <div class="ui-col">
+            <form id="search" class="autohide" autocomplete="off">
+              <span class="ic" data-i="search"></span>
+              <input id="q" type="search" placeholder="ไปที่ไหน" enterkeyhint="search" aria-label="ค้นหาปลายทาง">
+              <button type="button" id="qClear" class="icon-btn" hidden aria-label="ล้าง" data-i="close"></button>
+              <span class="quick">
+                <button type="button" id="qHome" class="icon-btn" aria-label="บ้าน" data-i="home"></button>
+                <button type="button" id="qWork" class="icon-btn" aria-label="ที่ทำงาน" data-i="work"></button>
+              </span>
+            </form>
+            <div id="results" class="list" hidden></div>
 
-      <div id="routeCard" class="float card" hidden>
-        <div class="rc-head">
-          <div class="grow">
-            <div id="rcName" class="rc-name"></div>
-            <div id="rcMeta" class="muted"></div>
+            <div id="navBanner" hidden>
+              <div class="nb-main">
+                <span id="nbArrow" class="nb-arrow"></span>
+                <div class="grow">
+                  <div id="nbDist" class="nb-dist"></div>
+                  <div id="nbText" class="nb-text"></div>
+                </div>
+              </div>
+              <div id="nbThen" class="nb-then" hidden></div>
+            </div>
+
+            <div class="ui-chips">
+              <button id="stopMode" class="chip-btn" hidden><span class="ic" data-i="addStop"></span><span id="stopModeT">เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่</span> <span class="ic" data-i="close"></span></button>
+              <button id="gmTab" class="chip-btn" hidden><span class="ic" data-i="search"></span>Google Maps</button>
+            </div>
           </div>
-          <button id="rcClose" class="icon-btn" aria-label="ยกเลิกปลายทาง" data-i="close"></button>
+          <button id="compass" class="fab small" aria-label="ทิศทางแผนที่" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l4.2 10h-8.4z" fill="#e82127"/><path d="M12 22l-4.2-10h8.4z" fill="#f5f5f7"/></svg></button>
         </div>
-        <div id="rcStops" class="stops"></div>
-        <div id="rcAlts" class="alts"></div>
-        <div class="row">
-          <button id="rcGo" class="btn primary grow"><span class="ic" data-i="nav"></span>เริ่มนำทาง</button>
-          <button id="rcAddStop" class="btn square" aria-label="เพิ่มจุดแวะ" data-i="addStop"></button>
-          <button id="rcOpts" class="btn square" aria-label="ตัวเลือกเส้นทาง" data-i="tune"></button>
-        </div>
-      </div>
 
-      <div id="navBanner" hidden>
-        <div class="nb-main">
-          <span id="nbArrow" class="nb-arrow"></span>
-          <div class="grow">
-            <div id="nbDist" class="nb-dist"></div>
-            <div id="nbText" class="nb-text"></div>
+        <div class="ui-gap"></div>
+
+        <!-- Places along the way: chargers, fuel, food, toilets, parking (OpenStreetMap data) -->
+        <div id="evCard" class="card" hidden>
+          <div class="ev-head">
+            <span class="ic ev-ic" id="evIc" data-i="bolt"></span>
+            <div class="grow rc-name" id="evTitle">ที่ชาร์จ</div>
+            <button id="evX" class="icon-btn" aria-label="ปิด" data-i="close"></button>
+          </div>
+          <div id="evCats" class="ev-cats"></div>
+          <div class="row ev-filters">
+            <div class="seg" id="evWhere">
+              <button data-where="near" class="on">ใกล้ฉัน</button>
+              <button data-where="route">ระหว่างทาง</button>
+            </div>
+            <button id="evDc" class="chip-btn" aria-pressed="false">ชาร์จเร็ว DC</button>
+          </div>
+          <div id="evList" class="ev-list"></div>
+          <div class="ev-foot">
+            <button id="evGoogle" class="btn ghost small-btn">ไม่เจอ? ค้นใน Google Maps</button>
+            <div class="ev-credit muted">ข้อมูลชาร์จ DC: ปิยเมษฐ์ วิษณุเวช · OpenStreetMap</div>
           </div>
         </div>
-        <div id="nbThen" class="nb-then" hidden></div>
-      </div>
-      <div id="navFoot" class="float card" hidden>
-        <div id="speed"><b>0</b><small>กม./ชม.</small></div>
-        <div class="grow">
-          <div id="nfEta" class="nf-eta"></div>
-          <div id="nfMeta" class="muted"></div>
-        </div>
-        <button id="nfSteps" class="icon-btn" aria-label="ขั้นตอนและภาพรวมเส้นทาง" data-i="list"></button>
-        <button id="nfEv" class="icon-btn" aria-label="ค้นหาตามเส้นทาง" data-i="search"></button>
-        <button id="nfVoice" class="icon-btn" aria-label="เสียงนำทาง" data-i="vol"></button>
-        <button id="nfStop" class="btn danger" aria-label="หยุดนำทาง">หยุด</button>
-      </div>
 
-      <button id="compass" class="float fab small" aria-label="ทิศทางแผนที่" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l4.2 10h-8.4z" fill="#e82127"/><path d="M12 22l-4.2-10h8.4z" fill="#f5f5f7"/></svg></button>
-      <button id="recenter" class="float fab autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
-      <button id="evBtn" class="float fab autohide" aria-label="ที่ชาร์จรถไฟฟ้า" data-i="bolt"></button>
-      <button id="stopMode" class="float chip-btn" hidden><span class="ic" data-i="addStop"></span><span id="stopModeT">เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่</span> <span class="ic" data-i="close"></span></button>
-
-      <!-- EV charging stations (OpenStreetMap data) -->
-      <div id="evCard" class="float card" hidden>
-        <div class="ev-head">
-          <span class="ic ev-ic" id="evIc" data-i="bolt"></span>
-          <div class="grow rc-name" id="evTitle">ที่ชาร์จ</div>
-          <button id="evX" class="icon-btn" aria-label="ปิด" data-i="close"></button>
-        </div>
-        <div id="evCats" class="ev-cats"></div>
-        <div class="row ev-filters">
-          <div class="seg" id="evWhere">
-            <button data-where="near" class="on">ใกล้ฉัน</button>
-            <button data-where="route">ระหว่างทาง</button>
+        <div class="ui-bottom">
+          <div class="ui-stack">
+            <div id="routeCard" class="card" hidden>
+              <div class="rc-head">
+                <div class="grow">
+                  <div id="rcName" class="rc-name"></div>
+                  <div id="rcMeta" class="muted"></div>
+                </div>
+                <button id="rcClose" class="icon-btn" aria-label="ยกเลิกปลายทาง" data-i="close"></button>
+              </div>
+              <div id="rcStops" class="stops"></div>
+              <div id="rcAlts" class="alts"></div>
+              <div class="row">
+                <button id="rcGo" class="btn primary grow"><span class="ic" data-i="nav"></span>เริ่มนำทาง</button>
+                <button id="rcAddStop" class="btn square" aria-label="เพิ่มจุดแวะ" data-i="addStop"></button>
+                <button id="rcOpts" class="btn square" aria-label="ตัวเลือกเส้นทาง" data-i="tune"></button>
+              </div>
+            </div>
+            <div id="navFoot" class="card" hidden>
+              <div id="speed"><b>0</b><small>กม./ชม.</small></div>
+              <div class="grow">
+                <div id="nfEta" class="nf-eta"></div>
+                <div id="nfMeta" class="muted"></div>
+              </div>
+              <button id="nfSteps" class="icon-btn" aria-label="ขั้นตอนและภาพรวมเส้นทาง" data-i="list"></button>
+              <button id="nfEv" class="icon-btn" aria-label="ค้นหาตามเส้นทาง" data-i="search"></button>
+              <button id="nfVoice" class="icon-btn" aria-label="เสียงนำทาง" data-i="vol"></button>
+              <button id="nfStop" class="btn danger" aria-label="หยุดนำทาง">หยุด</button>
+            </div>
           </div>
-          <button id="evDc" class="chip-btn" aria-pressed="false">ชาร์จเร็ว DC</button>
+          <div class="ui-fabs">
+            <button id="evBtn" class="fab autohide" aria-label="ที่ชาร์จและสถานที่ตามทาง" data-i="bolt"></button>
+            <button id="recenter" class="fab autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
+          </div>
         </div>
-        <div id="evList" class="ev-list"></div>
-        <button id="evGoogle" class="btn ghost small-btn">ไม่เจอ? ค้นใน Google Maps</button>
-        <div class="ev-credit muted">ข้อมูลชาร์จ DC: ปิยเมษฐ์ วิษณุเวช · OpenStreetMap</div>
       </div>
-      <button id="gmTab" class="float chip-btn" hidden><span class="ic" data-i="search"></span>Google Maps</button>
 
       <!-- Google Maps tab: the app lays a browser view over #gmHost -->
       <div id="gmPanel" hidden>
