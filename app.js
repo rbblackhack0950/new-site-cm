@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 33;
+const BUILD = 34;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -147,6 +147,14 @@ function applyLayout() {
 }
 function setMode(m) { st.mode = m; save(); applyLayout(); }
 addEventListener('resize', applyLayout);
+// Respond to pane size as well as viewport size (divider, orientation and full-screen modes).
+const mapPane = $('#mapPane');
+function fitMapControls() {
+  mapPane.classList.toggle('compact', mapPane.clientWidth < 480);
+}
+if (window.ResizeObserver) new ResizeObserver(fitMapControls).observe(mapPane);
+else addEventListener('resize', fitMapControls);
+fitMapControls();
 $$('#bar .seg button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 
 const div = $('#divider');

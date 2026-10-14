@@ -91,7 +91,7 @@ function fakeApp(version) {
 // ---------- harness ----------
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
 await new Promise(r => setTimeout(r, 800));
-const browser = await pw.chromium.launch();
+const browser = await pw.chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 let failed = 0, passed = 0;
 const counts = {};
 async function test(name, fn) {
@@ -300,6 +300,94 @@ console.log('Layout');
   });
   await shot(ph.page, '2-phone');
   await ph.ctx.close();
+}
+
+// ---------- responsive controls ----------
+console.log('Responsive controls');
+{
+  const { page, ctx, errors } = await newPage({ width: 320, height: 568 });
+  const overlap = (a, b) => a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
+  async function checkControls(selector) {
+    const issue = await page.locator(selector).evaluateAll(els => {
+      const visible = els.filter(e => e.getClientRects().length);
+      for (const e of visible) {
+        const r = e.getBoundingClientRect();
+        for (const other of visible) {
+          if (e === other || e.contains(other) || other.contains(e)) continue;
+          const b = other.getBoundingClientRect();
+          if (r.left < b.right - 1 && b.left < r.right - 1 && r.top < b.bottom - 1 && b.top < r.bottom - 1) return 'overlap: ' + (e.id || e.textContent) + ' / ' + (other.id || other.textContent);
+        }
+      }
+      return null;
+    });
+    assert.equal(issue, null);
+  }
+  const sizes = [[240, 320], [320, 568], [390, 844], [568, 320], [800, 480], [900, 600], [1024, 600], [1920, 720], [2560, 1440]];
+  await test('responsive bar and settings: no overlap on small, portrait, landscape and large screens', async () => {
+    for (const [width, height] of sizes) {
+      await page.setViewportSize({ width, height });
+      await checkControls('#bar button, #clock');
+      await page.click('#settingsBtn');
+      await checkControls('#sheet button, #sheet input, #sheet .set-row>.t');
+      await page.click('#sheet [data-close]');
+    }
+  });
+  await page.fill('#q', '13.756,100.54'); await page.press('#q', 'Enter');
+  await page.waitForSelector('#rcGo');
+  await test('route preview and recent results stay in flow at every viewport size', async () => {
+    for (const [width, height] of sizes) {
+      await page.setViewportSize({ width, height });
+      await page.waitForTimeout(80);
+      await page.locator('#q').click();
+      const top = await box(page, '.ui-top'), bottom = await box(page, '.ui-bottom');
+      assert.ok(!overlap(top, bottom), `${width}x${height}: search and route card`);
+      await checkControls('#search button, #routeCard button');
+      await page.locator('#rcGo').scrollIntoViewIfNeeded();
+      const go = await box(page, '#rcGo');
+      assert.equal(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#rcGo'), [go.x + go.width / 2, go.y + go.height / 2]), true, 'route action reachable by scrolling');
+    }
+  });
+  await page.click('#rcGo');
+  await test('navigation and places panel remain separate and actions reachable at every viewport size', async () => {
+    for (const [width, height] of sizes) {
+      await page.setViewportSize({ width, height });
+      await page.locator('#nfEv').click();
+      await page.waitForSelector('#evCats [data-cat]');
+      const banner = await box(page, '#navBanner'), panel = await box(page, '#evCard'), foot = await box(page, '#navFoot');
+      assert.ok(!overlap(banner, panel) && !overlap(panel, foot) && !overlap(banner, foot), `${width}x${height}: map panels overlap`);
+      await checkControls('#navFoot button, #evCard button');
+      await shot(page, `responsive-${width}x${height}`);
+      await page.locator('#evX').click();
+      await page.locator('#nfStop').scrollIntoViewIfNeeded();
+      const stop = await box(page, '#nfStop');
+      assert.equal(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#nfStop'), [stop.x + stop.width / 2, stop.y + stop.height / 2]), true, 'stop navigation reachable');
+    }
+  });
+  await test('divider resizing adapts controls and keeps stop reachable in a very narrow pane', async () => {
+    await page.setViewportSize({ width: 1000, height: 600 });
+    const divider = await box(page, '#divider');
+    await page.mouse.move(divider.x + divider.width / 2, divider.y + 40); await page.mouse.down();
+    await page.mouse.move(200, divider.y + 40, { steps: 5 }); await page.mouse.up();
+    await page.waitForFunction(() => document.querySelector('#mapPane').classList.contains('compact'));
+    await checkControls('#navFoot button');
+    await page.locator('#nfStop').click();
+    assert.equal(await vis(page, '#navBanner'), false);
+  });
+  await test('web address and Google Maps tab controls wrap without overlap on small screens', async () => {
+    for (const [width, height] of [[240, 320], [320, 568], [568, 320]]) {
+      await page.setViewportSize({ width, height });
+      await page.click('#bar [data-mode="media"]');
+      await page.click('#tiles .tile:has-text("YouTube")');
+      await checkControls('#addr button, #addr input');
+      await page.click('#appHome');
+      await page.click('#bar [data-mode="map"]');
+      await page.fill('#q', 'กาแฟ'); await page.press('#q', 'Enter');
+      await checkControls('.gm-bar button, #gmTitle');
+      await page.click('#gmX');
+    }
+  });
+  await test('no console errors in responsive layouts', () => assert.deepEqual(errors, []));
+  await ctx.close();
 }
 
 // ---------- search & navigation ----------

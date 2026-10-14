@@ -59,7 +59,7 @@ a{color:var(--accent)}
 .dock-app.on{opacity:1}
 .dock-app.on::after{content:"";position:absolute;bottom:-7px;left:50%;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--fg)}
 .clock{justify-self:end;text-align:right;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;padding-right:8px}
-@media (max-width:760px){#bar{display:flex;gap:8px}.bar-apps{flex:1}.clock{display:none}}
+@media (max-width:900px){#bar{display:flex;gap:8px}.bar-apps{flex:1}.clock{display:none}}
 @media (max-width:560px){.bar-apps{justify-content:flex-start}}
 
 /* ---------- Shared controls ---------- */
@@ -264,3 +264,42 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 .ev-list{min-height:88px}
 #mapPane.ev-open #nbThen{display:none}
 @media (max-height:640px){.ev-credit{display:none}}
+
+/* Keep controls in flow; small panes scroll instead of covering adjacent menus. */
+#mapUI{overflow:auto;padding-bottom:24px}
+#mapUI>.ui-top,#mapUI>.ui-bottom,#mapUI>#evCard{min-width:220px}
+#results{position:static;margin-top:6px;max-height:180px}
+#evCard{min-height:auto}
+.ui-fabs,.icon-btn,.btn.square{flex-shrink:0}
+.rc-name,.ritem .t,.ev-item .t,.set-row .t{overflow-wrap:anywhere}
+#bar .bar-apps{max-width:calc(100vw - 460px)}
+#mapPane.compact #mapUI{padding:8px 8px 24px;gap:8px}
+#mapPane.compact .ui-bottom{flex-wrap:wrap}
+#mapPane.compact .ui-stack{flex-basis:100%}
+#mapPane.compact .ui-fabs{flex-direction:row}
+#mapPane.compact #navFoot{flex-wrap:wrap}
+#mapPane.compact #navFoot>.grow{flex-basis:calc(100% - 90px)}
+#mapPane.compact .nb-main{padding:12px;gap:10px}
+#mapPane.compact .nb-dist{font-size:28px}
+#mapPane.compact #routeCard{padding:12px;gap:10px}
+#mapPane.compact #routeCard>.row{flex-wrap:wrap}
+#mapPane.compact #rcGo{flex-basis:100%}
+#mapPane.compact #search{gap:4px;padding-left:8px}
+#mapPane.compact #search input{font-size:16px}
+#stopMode{height:auto;min-height:40px;white-space:normal}
+.gm-bar,.gm-pick,.addr{flex-wrap:wrap}
+.gm-bar .seg{max-width:100%;overflow-x:auto}
+.addr input{flex-basis:80px}
+.tiles{grid-template-columns:repeat(auto-fill,minmax(min(108px,100%),1fr))}
+.home-head{flex-wrap:wrap;gap:8px}
+.set-row,.sheet-actions{flex-wrap:wrap}
+.set-row .seg{max-width:100%;overflow-x:auto}
+#sheet input[type=text]{min-width:0;width:100%}
+#sheet .btn{max-width:100%;white-space:normal;height:auto;min-height:44px}
+@media (max-width:900px){#bar .bar-apps{max-width:none;justify-content:flex-start}}
+@media (max-width:360px){
+  #bar{height:auto;min-height:64px;flex-wrap:wrap;padding:8px 0}
+  #bar .bar-apps{flex-basis:100%}
+  #sheetWrap{padding:8px}
+  #sheet{padding:16px;max-height:100%}
+}
