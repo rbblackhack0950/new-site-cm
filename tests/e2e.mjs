@@ -790,6 +790,34 @@ console.log('Driving view');
     await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
     await page.click('#rcGo'); await settled(); await page.waitForTimeout(700);
   });
+  await test('a slow screen gets the light mode by itself (two slow windows in a row), pins included', async () => {
+    assert.equal(await page.evaluate(() => __car.perf.lite), false);
+    await page.evaluate(() => { Object.assign(__car.perf, { acc: 0, n: 0, slow: 0 }); }); // start a clean window
+    await page.evaluate(() => { for (let i = 0; i < 50; i++) __car.perfFeed(0.06); }); // one slow window is not enough
+    assert.equal(await page.evaluate(() => __car.perf.lite), false);
+    await page.evaluate(() => { for (let i = 0; i < 50; i++) __car.perfFeed(0.06); });
+    assert.equal(await page.evaluate(() => __car.perf.lite), true);
+    assert.equal(await page.evaluate(() => document.body.classList.contains('lite')), true);
+    assert.match(await page.textContent('#toast'), /โหมดประหยัด/);
+    assert.equal(await page.locator('.ev-pin.sm').count(), 0, 'no ambient pins while driving in the light mode');
+  });
+  await test('device check: facts about this screen, a frame-rate test, and the light mode switch', async () => {
+    await page.click('#settingsBtn'); await page.click('#sDevice');
+    const txt = await page.textContent('#sheet');
+    for (const k of ['จอ', 'พื้นที่แอป', 'WebView / Chrome', 'Android', 'GPS', 'เสียงไทย', 'โหมดประหยัด']) assert.ok(txt.includes(k), k);
+    assert.match(txt, /1280×800 px/);
+    await page.click('#fpsGo');
+    await page.waitForFunction(() => document.querySelector('#fpsOut').dataset.fps, null, { timeout: 8000 });
+    assert.match(await page.textContent('#fpsOut'), /เฟรม\/วินาที/);
+    await page.click('#sheet [data-lite="off"]');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('lite')), false, 'off turns it off');
+    assert.equal(await page.evaluate(() => __car.st.lite), 'off');
+    await page.click('#sheet [data-lite="on"]');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('lite')), true, 'on forces it');
+    await page.click('#sheet [data-lite="auto"]');
+    assert.equal(await page.evaluate(() => document.body.classList.contains('lite')), false, 'auto starts light off again');
+    await page.mouse.click(4, 4);
+  });
   await test('compass: north up on demand, and back', async () => {
     await page.click('#compass'); await settled();
     assert.equal(Math.round(await page.evaluate(() => __car.view.shown)) % 360, 0);

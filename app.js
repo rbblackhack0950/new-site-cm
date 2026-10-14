@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 36;
+const BUILD = 37;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -30,7 +30,7 @@ const DEFAULT_APPS = [
   { id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', letter: 'S' },
   { id: 'web', name: 'เว็บ', url: '', color: '#2c2d31', icon: 'globe' }
 ];
-const DEF = { headingUp: true, autoZoom: true, ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
+const DEF = { lite: 'auto', headingUp: true, autoZoom: true, ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 // first run of this version: start from the defaults plus apps added earlier (st.custom)
 if (!Array.isArray(st.apps)) {
@@ -362,6 +362,22 @@ function wantZoom(minZoom) {
   if (z !== cur) view.zoomAt = Date.now();
   return z;
 }
+// ---- Weak screens: watch how smoothly drawing goes while driving and cut the effects when it does not ----
+// "auto" turns the light mode on by itself after two slow 3-second windows in a row; it stays on until the app restarts.
+const perf = { acc: 0, n: 0, slow: 0, fps: 0, lite: false, why: '' };
+function setLite(on, why) {
+  perf.lite = on; perf.why = why || '';
+  body.classList.toggle('lite', on);
+  if (typeof updatePins === 'function') updatePins();
+}
+function applyLiteSetting() { if (st.lite === 'on') setLite(true, 'manual'); else if (st.lite === 'off') setLite(false); }
+function perfFeed(dt) { // dt: seconds one frame took
+  perf.acc += dt; perf.n++;
+  if (perf.acc < 3) return;
+  const avg = perf.acc / perf.n; perf.fps = 1 / avg; perf.acc = perf.n = 0;
+  perf.slow = avg > .04 ? perf.slow + 1 : 0;
+  if (perf.slow >= 2 && st.lite === 'auto' && !perf.lite) { setLite(true, Math.round(perf.fps) + ' fps'); toast('เครื่องทำงานช้า เปิดโหมดประหยัดให้แล้ว', 4000); }
+}
 // ---- Smooth driving: the car glides along the route at the GPS speed, drawn every frame, and the camera rides with it ----
 // GPS arrives about once a second, so jumping to each fix looks like stepping. Instead the car's place on the route
 // (anim.along, in metres) advances every frame at the measured speed and is eased toward where the newest fix says it is.
@@ -389,7 +405,7 @@ function placeCamera(ll, animate) {
     const h = (360 - view.shown) * Math.PI / 180, dy = map.getSize().y * .2, px = map.project(ll, z); // screen "up" in world terms
     c = map.unproject(px.add([Math.sin(h) * dy, -Math.cos(h) * dy]), z);
   }
-  map.setView(c, z, { animate: !!animate || view.selfZoom });
+  map.setView(c, z, { animate: !perf.lite && (!!animate || view.selfZoom) });
 }
 function followView() { placeCamera(anim.ll || here.ll, true); }
 function frame(now) {
@@ -416,13 +432,15 @@ function frame(now) {
     ll = anim.free;
   }
   anim.ll = ll;
+  perfFeed(dt);
   meMarker.setLatLng(ll);
   // heading: the road a little way ahead (steady), or the GPS heading when off the route
   let target = view.car;
   if (anim.onRoute) { const p2 = pointAt(Math.min(nav.cum[nav.cum.length - 1], anim.along + 25)); if (Math.abs(p2[0] - ll[0]) + Math.abs(p2[1] - ll[1]) > 1e-6) target = bearing(ll, p2); }
   else if (here.heading != null) target = here.heading;
   view.car = lerpAng(view.car, target, 1 - Math.exp(-dt / .25));
-  if (follow) {
+  anim.n = (anim.n || 0) + 1;
+  if (follow && !(perf.lite && (anim.n & 1))) { // in the light mode the camera is updated every other frame
     if (headingUpOn()) { const want = wrap360(360 - view.car); if (Math.abs(angDiff(want, view.shown)) > .15) setTurn(want); }
     placeCamera(ll, false);
   }
@@ -863,7 +881,7 @@ for (const [id, kind] of [['qHome', 'home'], ['qWork', 'work']]) {
 // ===================================================================
 // Backup: one text code carries the settings, apps, home/work and recent places to another device
 // ===================================================================
-const BACKUP_KEYS = ['headingUp', 'autoZoom', 'ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
+const BACKUP_KEYS = ['lite', 'headingUp', 'autoZoom', 'ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
 function backupCode() {
   const o = {};
   BACKUP_KEYS.forEach(k => o[k] = st[k]);
@@ -884,6 +902,7 @@ function readBackup(text) {
   if (Number.isFinite(o.ratio)) out.ratio = Math.min(80, Math.max(20, Math.round(o.ratio)));
   for (const k of ['swapped', 'voice', 'evPins', 'headingUp', 'autoZoom']) if (typeof o[k] === 'boolean') out[k] = o[k];
   if (o.stack === null || typeof o.stack === 'boolean') out.stack = o.stack;
+  if (['auto', 'on', 'off'].includes(o.lite)) out.lite = o.lite;
   if (['map', 'split', 'media'].includes(o.mode)) out.mode = o.mode;
   if (o.avoid && typeof o.avoid === 'object') out.avoid = { toll: !!o.avoid.toll, motorway: !!o.avoid.motorway, ferry: !!o.avoid.ferry };
   if (Array.isArray(o.recentDest)) out.recentDest = o.recentDest.slice(0, 8).map(r => r && place(r) && { ...place(r), sub: str(r.sub, 120) }).filter(Boolean);
@@ -1000,7 +1019,7 @@ async function updatePins() {
   dcById = new Map(local.map(s => [s.id, s]));
   const b = map.getBounds(), c = map.getCenter();
   const shown = local.filter(s => b.contains([s.lat, s.lng])).map(s => [s, (s.lat - c.lat) ** 2 + (s.lng - c.lng) ** 2])
-    .sort((x, y) => x[1] - y[1]).slice(0, nav.active ? PIN_MAX_NAV : PIN_MAX).map(x => x[0]);
+    .sort((x, y) => x[1] - y[1]).slice(0, nav.active ? (perf.lite ? 0 : PIN_MAX_NAV) : perf.lite ? 40 : PIN_MAX).map(x => x[0]);
   const key = shown.map(s => s.id).join();
   if (key === pinKey) return; // same stations as before: leave the pins alone
   pinKey = key; pinLayer.clearLayers();
@@ -1520,6 +1539,63 @@ if (native?.appVersion) { setTimeout(() => checkAppUpdate(false), 3000); setInte
 // ===================================================================
 // Settings
 // ===================================================================
+// what this screen is, and how smooth the map runs on it
+function deviceInfo() {
+  const ua = navigator.userAgent, v = ua.match(/Chrome\/([\d.]+)/), th = 'speechSynthesis' in window && (speechSynthesis.getVoices() || []).some(x => /^th/i.test(x.lang));
+  return [
+    ['จอ', `${screen.width}×${screen.height} px · ratio ${devicePixelRatio}`],
+    ['พื้นที่แอป', `${innerWidth}×${innerHeight} px`],
+    ['WebView / Chrome', v ? v[1] : '?'],
+    ['Android', (ua.match(/Android ([\d.]+)/) || [])[1] || '?'],
+    ['รุ่น', (ua.match(/;\s*([^;)]+?)\s+Build/) || [])[1] || '?'],
+    ['CPU / RAM', `${navigator.hardwareConcurrency || '?'} แกน / ${navigator.deviceMemory || '?'} GB`],
+    ['แอป Android', native?.appVersion ? 'เวอร์ชัน 1.0.' + native.appVersion() : native ? 'เวอร์ชันเก่า' : 'ไม่ใช่ (เบราว์เซอร์)'],
+    ['GPS', here.ll ? `ได้ตำแหน่ง ±${Math.round(here.acc || 0)} ม.` : 'ยังไม่ได้ตำแหน่ง'],
+    ['เสียงไทย', th ? 'มี' : 'ไม่พบ (เสียงนำทางอาจเงียบ)'],
+    ['โหมดประหยัด', perf.lite ? 'เปิดอยู่ (' + (perf.why || '') + ')' : 'ปิด'],
+    ['เวอร์ชันแอปเว็บ', String(BUILD)]
+  ];
+}
+// pan the map every frame for 3 s, like driving does, and report the frame rate
+function fpsTest(done) {
+  if (!map) return done({ fps: 0, worst: 0 });
+  const c = map.getCenter(), z = map.getZoom(), times = []; let last = performance.now(), i = 0;
+  const step = now => {
+    times.push(now - last); last = now; i++;
+    map.panBy([i % 2 ? 2 : -2, 0], { animate: false });
+    if (times.length < 600 && now - t0 < 3000) requestAnimationFrame(step);
+    else {
+      map.setView(c, z, { animate: false });
+      const t = times.slice(1).sort((a, b) => a - b), sum = t.reduce((a, b) => a + b, 0);
+      done({ fps: t.length ? 1000 / (sum / t.length) : 0, worst: t.length ? t[Math.floor(t.length * .95)] : 0 });
+    }
+  };
+  const t0 = performance.now(); requestAnimationFrame(step);
+}
+function deviceSheet() {
+  const rows = deviceInfo();
+  const seg = (v, t) => `<button data-lite="${v}" class="${st.lite === v ? 'on' : ''}">${t}</button>`;
+  openSheet(`<h2>ตรวจเครื่อง</h2>
+    ${rows.map(([k, v]) => `<div class="set-row"><span class="t">${esc(k)}</span><span class="muted dev-v">${esc(v)}</span></div>`).join('')}
+    <div class="set-row"><div class="grow"><div class="t">ความลื่นของแผนที่</div><div class="muted" id="fpsOut">ยังไม่ได้ทดสอบ</div></div><button class="btn" id="fpsGo">ทดสอบ 3 วินาที</button></div>
+    <div class="set-row"><div class="grow"><div class="t">โหมดประหยัดเครื่อง</div><div class="muted">ลดเอฟเฟกต์และความถี่ในการวาดบนจอที่ช้า</div></div><div class="seg">${seg('auto', 'อัตโนมัติ')}${seg('on', 'เปิด')}${seg('off', 'ปิด')}</div></div>
+    <div class="sheet-actions"><button class="btn" id="devBack">ย้อนกลับ</button><button class="btn primary" id="devCopy">คัดลอกข้อมูล</button></div>`, sh => {
+    sh.querySelector('#devBack').onclick = settingsSheet;
+    sh.querySelectorAll('[data-lite]').forEach(b => b.onclick = () => {
+      st.lite = b.dataset.lite; save(); perf.slow = 0;
+      if (st.lite === 'auto') setLite(false); else applyLiteSetting();
+      sh.querySelectorAll('[data-lite]').forEach(x => x.classList.toggle('on', x === b));
+    });
+    sh.querySelector('#fpsGo').onclick = () => {
+      const out = sh.querySelector('#fpsOut'); out.textContent = 'กำลังวัด…';
+      fpsTest(r => { out.textContent = `${Math.round(r.fps)} เฟรม/วินาที (ช้าสุด 5% ≈ ${Math.round(r.worst)} มิลลิวินาที) · ` + (r.fps >= 50 ? 'ลื่นดี' : r.fps >= 30 ? 'พอใช้ แนะนำให้เปิดโหมดประหยัด' : 'ช้า ควรเปิดโหมดประหยัด'); out.dataset.fps = Math.round(r.fps); });
+    };
+    sh.querySelector('#devCopy').onclick = async () => {
+      const text = rows.map(([k, v]) => `${k}: ${v}`).join('\n') + '\nความลื่น: ' + (sh.querySelector('#fpsOut').textContent);
+      try { await navigator.clipboard.writeText(text); toast('คัดลอกแล้ว', 1800); } catch { toast('คัดลอกไม่ได้ ถ่ายภาพหน้าจอแทนได้', 3000); }
+    };
+  });
+}
 // drop every service worker and cache, then reload from the network
 async function repairApp() {
   toast('กำลังซ่อมแอป…');
@@ -1541,6 +1617,7 @@ function settingsSheet() {
     <div class="set-row"><span class="t">แบ่งจอ</span><div class="seg">${segBtn('auto', 'อัตโนมัติ')}${segBtn('side', 'ซ้าย-ขวา')}${segBtn('stack', 'บน-ล่าง')}</div></div>
     <div class="set-row"><span class="t">สลับฝั่งแผนที่ / แอป</span><button class="btn" id="sSwap">สลับ</button></div>
     <h3>ข้อมูล</h3>
+    <div class="set-row"><div class="grow"><div class="t">ตรวจเครื่อง</div><div class="muted">ข้อมูลจอ ความลื่น โหมดประหยัด</div></div><button class="btn" id="sDevice">เปิด</button></div>
     <div class="set-row"><div class="grow"><div class="t">สำรอง / ย้ายการตั้งค่า</div><div class="muted">คัดลอกไปใช้อีกเครื่อง</div></div><button class="btn" id="sBackup">เปิด</button></div>
     ${native?.appVersion ? appUpdHtml() : ''}
     <div class="adv"><button class="btn small-btn" id="sResetLayout">คืนค่าหน้าจอ</button><button class="btn small-btn" id="sRestoreApps">คืนแอปเริ่มต้น</button><button class="btn small-btn" id="sRepair">ซ่อมแอป</button></div>
@@ -1555,6 +1632,7 @@ function settingsSheet() {
     });
     s.querySelector('#sSwap').onclick = () => { st.swapped = !st.swapped; save(); applyLayout(); };
     s.querySelector('#sBackup').onclick = backupSheet;
+    s.querySelector('#sDevice').onclick = deviceSheet;
     s.querySelector('#sResetLayout').onclick = () => { Object.assign(st, { ratio: DEF.ratio, swapped: false, stack: null, mode: 'split' }); save(); applyLayout(); closeSheet(); };
     s.querySelector('#sRestoreApps').onclick = () => {
       const missing = DEFAULT_APPS.filter(d => !st.apps.some(a => a.id === d.id));
@@ -1596,10 +1674,11 @@ setTimeout(resolveMissingLogos, 4000);
 setVoiceIcon();
 optsBadge();
 renderQuick();
+applyLiteSetting();
 tickClock();
 wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, view, anim, onNewVersion, get reloadPending() { return reloadPending; }, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, view, anim, perf, perfFeed, deviceInfo, onNewVersion, get reloadPending() { return reloadPending; }, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

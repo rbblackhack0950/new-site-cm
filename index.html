@@ -186,7 +186,7 @@
 // and "slow" when nothing has failed yet. The notice removes itself if the app starts after all.
 (function () {
   var errs = window.__bootErrs = [], t0 = Date.now(), shown = null;
-  window.__want = 36; // must equal BUILD in app.js
+  window.__want = 37; // must equal BUILD in app.js
   addEventListener('error', function (e) {
     var el = e.target;
     if (el && el !== window && (el.src || el.href)) errs.push('โหลดไฟล์ไม่สำเร็จ: ' + (el.src || el.href).split('/').pop());

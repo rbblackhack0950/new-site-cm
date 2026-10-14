@@ -304,3 +304,8 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
   #sheetWrap{padding:8px}
   #sheet{padding:16px;max-height:100%}
 }
+/* light mode for weak screens: no transitions, no shadows */
+body.lite *{transition:none!important;animation:none!important}
+body.lite .card,body.lite .fab,body.lite #navBanner,body.lite #toast,body.lite #snack,body.lite .ev-pin,body.lite .ev-popup .leaflet-popup-content-wrapper{box-shadow:none}
+body.lite .me.nav .car,body.lite .pin svg[aria-hidden]{filter:none}
+.dev-v{text-align:right;max-width:60%;word-break:break-word}
