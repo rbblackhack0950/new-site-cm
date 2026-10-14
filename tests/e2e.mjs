@@ -762,6 +762,20 @@ console.log('Driving view');
     assert.equal(await vis(page, '#evDc'), true);
     await page.click('#evX');
   });
+  await test('a new release found mid-drive waits until navigation ends', async () => {
+    await page.evaluate(() => { __car.onNewVersion(); });
+    await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => __car.nav.active), true, 'still navigating, page not reloaded');
+    assert.equal(await page.evaluate(() => __car.reloadPending), true);
+    assert.match(await page.textContent('#toast'), /จะอัปเดตเมื่อจบการนำทาง/);
+    await page.evaluate(() => { window.__still = 1; }); // gone after a reload
+    await page.click('#nfStop');
+    await page.waitForFunction(() => !window.__still, null, { timeout: 8000 });
+    await page.waitForFunction(() => window.__car && window.__car.here.ll);
+    await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+    await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+    await page.click('#rcGo'); await settled(); await page.waitForTimeout(700);
+  });
   await test('compass: north up on demand, and back', async () => {
     await page.click('#compass'); await settled();
     assert.equal(Math.round(await page.evaluate(() => __car.view.shown)) % 360, 0);

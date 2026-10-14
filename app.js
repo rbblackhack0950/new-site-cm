@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 34;
+const BUILD = 35;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -1140,6 +1140,7 @@ function stopNav(silent) {
   $('#navBanner').hidden = $('#navFoot').hidden = $('#compass').hidden = true;
   if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); drawAlts(); }
   keepAwake(false);
+  if (reloadPending) location.reload();
 }
 $('#nfStop').onclick = () => { stopNav(); clearRoute(); };
 // all remaining steps, and the whole route at a glance
@@ -1501,12 +1502,24 @@ $('#settingsBtn').onclick = settingsSheet;
 // ===================================================================
 // Boot
 // ===================================================================
-// When an updated service worker takes over, reload once so the new version shows right away
+// A new release is picked up at launch and then every 20 minutes and whenever the app comes back to the front, because the
+// car app can stay open for days. When the new files take over, the page reloads once - but never in the middle of a drive:
+// then it waits until navigation ends.
+let reloadPending = false;
+function onNewVersion() {
+  if (nav.active) { reloadPending = true; toast('มีเวอร์ชันใหม่ จะอัปเดตเมื่อจบการนำทาง', 4000); return; }
+  location.reload();
+}
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; onNewVersion(); } });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => {
+    r.update();
+    const check = () => r.update().catch(() => {});
+    setInterval(check, 20 * 60e3);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  }).catch(() => {});
 }
 if (!native) { body.classList.add('no-native'); $('#noNative').hidden = false; }
 paintIcons();
@@ -1521,5 +1534,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, view, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, view, onNewVersion, get reloadPending() { return reloadPending; }, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();
