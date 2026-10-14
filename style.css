@@ -269,7 +269,8 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 #mapUI{overflow:auto;padding-bottom:24px}
 #mapUI>.ui-top,#mapUI>.ui-bottom,#mapUI>#evCard{min-width:220px}
 #results{position:static;margin-top:6px;max-height:180px}
-#evCard{min-height:auto}
+#evCard{min-height:370px} /* big enough for its own rows plus a little list; on a screen shorter than that the whole overlay scrolls instead of the panel spilling over its neighbours */
+#mapPane:not(.compact) #results{position:absolute;margin-top:0;max-height:min(60vh,440px)}
 .ui-fabs,.icon-btn,.btn.square{flex-shrink:0}
 .rc-name,.ritem .t,.ev-item .t,.set-row .t{overflow-wrap:anywhere}
 #bar .bar-apps{max-width:calc(100vw - 460px)}

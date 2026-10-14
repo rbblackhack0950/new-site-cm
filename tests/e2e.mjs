@@ -309,12 +309,21 @@ console.log('Responsive controls');
   const overlap = (a, b) => a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
   async function checkControls(selector) {
     const issue = await page.locator(selector).evaluateAll(els => {
-      const visible = els.filter(e => e.getClientRects().length);
-      for (const e of visible) {
-        const r = e.getBoundingClientRect();
-        for (const other of visible) {
+      // what the user can actually see: an element scrolled out of its list is clipped by that list, so it cannot overlap anything
+      const shown = e => {
+        let r = e.getBoundingClientRect(), L = r.left, T = r.top, R = r.right, B = r.bottom;
+        for (let p = e.parentElement; p; p = p.parentElement) {
+          const cs = getComputedStyle(p);
+          if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+          const q = p.getBoundingClientRect();
+          L = Math.max(L, q.left); T = Math.max(T, q.top); R = Math.min(R, q.right); B = Math.min(B, q.bottom);
+        }
+        return R - L > 1 && B - T > 1 ? { left: L, top: T, right: R, bottom: B } : null;
+      };
+      const visible = els.filter(e => e.getClientRects().length).map(e => [e, shown(e)]).filter(([, r]) => r);
+      for (const [e, r] of visible) {
+        for (const [other, b] of visible) {
           if (e === other || e.contains(other) || other.contains(e)) continue;
-          const b = other.getBoundingClientRect();
           if (r.left < b.right - 1 && b.left < r.right - 1 && r.top < b.bottom - 1 && b.top < r.bottom - 1) return 'overlap: ' + (e.id || e.textContent) + ' / ' + (other.id || other.textContent);
         }
       }
@@ -738,7 +747,8 @@ console.log('Driving view');
       await page.evaluate(() => { document.querySelector('#evList').innerHTML = Array.from({ length: 30 }, (_, i) => `<div class="ev-item"><div class="grow"><div class="t">สถานี ${i}</div><div class="muted">รายละเอียด</div><div class="chips"><span class="chip">CCS2</span></div></div><button class="btn primary">แวะ</button></div>`).join(''); });
       const [bn, card, ft, m] = [await box(page, '#navBanner'), await box(page, '#evCard'), await box(page, '#navFoot'), await box(page, '#mapPane')];
       assert.ok(!overlap(bn, card) && !overlap(card, ft) && !overlap(bn, ft), `${w}x${h}: banner ${bn.y}-${bn.y + bn.height}, card ${card.y}-${card.y + card.height}, bar ${ft.y}-${ft.y + ft.height}`);
-      assert.ok(card.y >= m.y && card.y + card.height <= m.y + m.height, 'panel inside the map');
+      const scrolls = await page.evaluate(() => { const u = document.querySelector('#mapUI'); return u.scrollHeight > u.clientHeight + 1; });
+      assert.ok(card.y >= m.y && (card.y + card.height <= m.y + m.height || scrolls), 'panel inside the map, or the overlay scrolls to reach it');
       const x = await box(page, '#evX');
       assert.equal(await page.evaluate(([cx, cy]) => document.elementFromPoint(cx, cy).closest('#evX') !== null, [x.x + x.width / 2, x.y + x.height / 2]), true, 'the close button is the topmost thing there');
       await shot(page, `16-panel-${w}`);
