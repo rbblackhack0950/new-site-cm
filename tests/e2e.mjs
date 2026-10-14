@@ -52,6 +52,11 @@ const DC = { s: [
   [13.75005, 100.53402, 'PEA VOLTA สามย่าน', '', 'PEA', [['CCS2', 120, 1], ['Type 2', 0, 0]]],
   [13.7440, 100.5330, 'Local DC', 'Local DC', 'PTT', [['CCS2', 150, 1]]]
 ] };
+// fuel stations: one on the route at B, one far away
+const FUEL = { elements: [
+  { type: 'node', id: 11, lat: 13.7500, lon: 100.5345, tags: { amenity: 'fuel', name: 'ปตท. สามย่าน', brand: 'PTT', opening_hours: '24/7', 'fuel:diesel': 'yes', 'fuel:octane_95': 'yes' } },
+  { type: 'node', id: 12, lat: 13.9500, lon: 100.7000, tags: { amenity: 'fuel', name: 'Shell ไกล' } }
+] };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const PLACE_URL = 'https://www.google.com/maps/place/%E0%B8%9B%E0%B9%89%E0%B8%B2%E0%B9%81%E0%B8%94%E0%B8%87/@13.75,100.53,17z/data=!4m6!3m5!1s0x1:0x2!8m2!3d13.756!4d100.54';
 
@@ -133,7 +138,7 @@ async function newPage(viewport, { app = 21, ...extra } = {}) {
       return json(ex === 'toll' ? { code: 'Ok', routes: [ALT] } : { code: 'Ok', routes: [ROUTE.routes[0], ALT] });
     }
     if (u.includes('overpass-api.de')) { hit('overpass0'); return route.fulfill({ status: 504, body: 'busy' }); }
-    if (u.includes('overpass.kumi.systems')) { hit('overpass1'); (counts.overpassQ = counts.overpassQ || []).push(decodeURIComponent((route.request().postData() || '').replace(/^data=/, ''))); return json(STATIONS); }
+    if (u.includes('overpass.kumi.systems')) { hit('overpass1'); const q = decodeURIComponent((route.request().postData() || '').replace(/^data=/, '')); (counts.overpassQ = counts.overpassQ || []).push(q); return json(q.includes('"amenity"="fuel"') ? FUEL : STATIONS); }
     return route.fulfill({ status: 404, body: '' });
   });
   await page.goto(BASE);
@@ -576,6 +581,72 @@ console.log('Driving view');
     assert.ok(Math.abs(((after - before + 540) % 360) - 180) > 20, `turned from ${before} to ${after}`);
     const r = await ahead();
     assert.ok(r.dy < -10, `still pointing up: ${JSON.stringify(r)}`);
+  });
+  await test('zoom follows speed: out when fast, in for a turn, and a manual zoom is left alone', async () => {
+    const zoom = () => page.evaluate(() => __car.map.getZoom());
+    const at = m => page.evaluate(d => { const { nav } = __car, D = nav.stepAt[nav.step] - d; let i = 0; while (i < nav.line.length - 2 && nav.cum[i + 1] < D) i++; const f = (D - nav.cum[i]) / (nav.cum[i + 1] - nav.cum[i]); return [nav.line[i][0] + (nav.line[i + 1][0] - nav.line[i][0]) * f, nav.line[i][1] + (nav.line[i + 1][1] - nav.line[i][1]) * f]; }, m); // a point d metres before the next turn
+    const go = async (p, kmh) => { await page.evaluate(() => { __car.view.zoomAt = 0; __car.view.manualUntil = 0; }); await setPos(p, kmh / 3.6); await page.waitForTimeout(700); };
+    await go([13.746, 100.534], 100); assert.equal(await zoom(), 15, 'fast: far out');
+    await go([13.746, 100.534], 55); assert.equal(await zoom(), 16, 'town speed');
+    await go([13.746, 100.534], 15); assert.equal(await zoom(), 17, 'slow: close');
+    await go(await at(120), 20); assert.equal(await zoom(), 18, 'turn ahead: closer still');
+    await page.evaluate(() => __car.map.setZoom(13)); await page.waitForTimeout(500);
+    await page.evaluate(() => { __car.view.zoomAt = 0; }); await setPos([13.746, 100.534], 15); await page.waitForTimeout(600);
+    assert.equal(await zoom(), 13, 'the driver\'s own zoom stays for a while');
+    await page.evaluate(() => { __car.view.manualUntil = 0; __car.st.autoZoom = false; });
+    await setPos([13.746, 100.534], 100); await page.waitForTimeout(700);
+    assert.ok(await zoom() >= 16, 'automatic zoom can be turned off');
+    await page.evaluate(() => { __car.st.autoZoom = true; });
+  });
+  await test('route steps: the whole way ahead in a list, nearest first', async () => {
+    await page.click('#nfSteps');
+    assert.match(await page.textContent('#sheet h2'), /เส้นทางที่เหลือ/);
+    const rows = await page.$$eval('#sheet .st-row .t', e => e.map(x => x.textContent));
+    assert.equal(rows.length, await page.evaluate(() => __car.nav.steps.length - __car.nav.step));
+    assert.equal(rows[0], await page.textContent('#nbText'), 'first row is the next turn');
+    assert.match(rows.at(-1), /ถึงจุดหมาย/);
+    await shot(page, '13-steps');
+  });
+  await test('overview shows the whole route, north up; the location button returns to driving', async () => {
+    await page.click('#stOverview');
+    await page.waitForTimeout(700);
+    const r = await page.evaluate(() => { const { map, nav, here, view } = __car, s = map.getSize();
+      return { follow: document.querySelector('#recenter').classList.contains('off'), shown: view.shown, inside: nav.line.concat([here.ll]).every(p => { const c = map.latLngToContainerPoint(p); return c.x >= 0 && c.y >= 0 && c.x <= s.x && c.y <= s.y; }) }; });
+    assert.equal(r.follow, true, 'following is off'); assert.equal(Math.round(r.shown) % 360, 0); assert.ok(r.inside, 'all of the route is in view');
+    await shot(page, '14-overview');
+    await page.click('#recenter'); await settled(); await page.waitForTimeout(700);
+    assert.equal(await page.evaluate(() => document.querySelector('#recenter').classList.contains('off')), false);
+  });
+  await test('tapping a step looks at that turn', async () => {
+    await page.click('#navBanner');
+    const idx = +await page.getAttribute('#sheet .st-row >> nth=1', 'data-st');
+    await page.click('#sheet .st-row >> nth=1'); await page.waitForTimeout(500);
+    const r = await page.evaluate(i => { const { map, nav, here } = __car, st = nav.steps[i], c = map.getCenter();
+      return { off: document.querySelector('#recenter').classList.contains('off'), d: __car.haversine([c.lat, c.lng], [st.maneuver.location[1], st.maneuver.location[0]]) }; }, idx);
+    assert.equal(r.off, true); assert.ok(r.d < 40, 'centred on the step: ' + r.d);
+    await page.click('#recenter'); await settled(); await page.waitForTimeout(600);
+  });
+  await test('search along the route: categories, in driving order; แวะ adds the stop', async () => {
+    await page.click('#nfEv');
+    assert.equal(await page.locator('#evCats [data-cat]').count(), 5);
+    await page.click('#evCats [data-cat="fuel"]');
+    await page.waitForFunction(() => /ปตท/.test(document.querySelector('#evList').textContent));
+    assert.deepEqual(await page.$$eval('.ev-item .t', e => e.map(x => x.textContent)), ['ปตท. สามย่าน'], 'the far one is left out');
+    const item = await page.textContent('.ev-item');
+    assert.match(item, /24 ชม\./); assert.match(item, /ดีเซล/); assert.match(item, /ห่างเส้นทาง/);
+    assert.equal(await vis(page, '#evDc'), false, 'DC filter only for chargers');
+    assert.match(counts.overpassQ.at(-1), /"amenity"="fuel"\]\(around:1500,13\.74\d+,100\.53\d+,/);
+    assert.ok(await page.locator('.ev-pin.c-fuel').count());
+    await shot(page, '15-along-route');
+    await page.click('.ev-item [data-evstop]');
+    await page.waitForFunction(() => __car.nav.stops.length === 1 && __car.nav.stops[0].name === 'ปตท. สามย่าน');
+    assert.equal(new URL(counts.osrmUrls.at(-1)).pathname.split('/').pop().split(';').length, 3, 'rerouted through the stop');
+  });
+  await test('categories switch: the chargers list comes back with its DC filter', async () => {
+    await page.click('#nfEv'); await page.click('#evCats [data-cat="ev"]');
+    await page.waitForFunction(() => document.querySelectorAll('.ev-item').length >= 1);
+    assert.equal(await vis(page, '#evDc'), true);
+    await page.click('#evX');
   });
   await test('compass: north up on demand, and back', async () => {
     await page.click('#compass'); await settled();

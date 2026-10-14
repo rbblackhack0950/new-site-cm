@@ -61,7 +61,8 @@
           <div id="nfEta" class="nf-eta"></div>
           <div id="nfMeta" class="muted"></div>
         </div>
-        <button id="nfEv" class="icon-btn" aria-label="ที่ชาร์จระหว่างทาง" data-i="bolt"></button>
+        <button id="nfSteps" class="icon-btn" aria-label="ขั้นตอนและภาพรวมเส้นทาง" data-i="list"></button>
+        <button id="nfEv" class="icon-btn" aria-label="ค้นหาตามเส้นทาง" data-i="search"></button>
         <button id="nfVoice" class="icon-btn" aria-label="เสียงนำทาง" data-i="vol"></button>
         <button id="nfStop" class="btn danger" aria-label="หยุดนำทาง">หยุด</button>
       </div>
@@ -74,10 +75,11 @@
       <!-- EV charging stations (OpenStreetMap data) -->
       <div id="evCard" class="float card" hidden>
         <div class="ev-head">
-          <span class="ic ev-ic" data-i="bolt"></span>
-          <div class="grow rc-name">ที่ชาร์จ</div>
+          <span class="ic ev-ic" id="evIc" data-i="bolt"></span>
+          <div class="grow rc-name" id="evTitle">ที่ชาร์จ</div>
           <button id="evX" class="icon-btn" aria-label="ปิด" data-i="close"></button>
         </div>
+        <div id="evCats" class="ev-cats"></div>
         <div class="row ev-filters">
           <div class="seg" id="evWhere">
             <button data-where="near" class="on">ใกล้ฉัน</button>
@@ -164,7 +166,7 @@
 // and "slow" when nothing has failed yet. The notice removes itself if the app starts after all.
 (function () {
   var errs = window.__bootErrs = [], t0 = Date.now(), shown = null;
-  window.__want = 32; // must equal BUILD in app.js
+  window.__want = 33; // must equal BUILD in app.js
   addEventListener('error', function (e) {
     var el = e.target;
     if (el && el !== window && (el.src || el.href)) errs.push('โหลดไฟล์ไม่สำเร็จ: ' + (el.src || el.href).split('/').pop());

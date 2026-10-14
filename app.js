@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 32;
+const BUILD = 33;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -30,7 +30,7 @@ const DEFAULT_APPS = [
   { id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', letter: 'S' },
   { id: 'web', name: 'เว็บ', url: '', color: '#2c2d31', icon: 'globe' }
 ];
-const DEF = { headingUp: true, ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
+const DEF = { headingUp: true, autoZoom: true, ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 // first run of this version: start from the defaults plus apps added earlier (st.custom)
 if (!Array.isArray(st.apps)) {
@@ -68,6 +68,11 @@ const P = {
   addStop: 'M13 7h-2v3H8v2h3v3h2v-3h3v-2h-3zm-1-5C7.8 2 4 5.22 4 10.2c0 3.32 2.67 7.25 8 11.8 5.33-4.55 8-8.48 8-11.8C20 5.22 16.2 2 12 2m0 18c-4.1-3.6-6-6.6-6-9.8C6 6.6 8.7 4 12 4s6 2.6 6 6.2c0 3.2-1.9 6.2-6 9.8',
   home: 'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
   work: 'M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2m-6 0h-4V4h4z',
+  list: 'M3 13h2v-2H3zm0 4h2v-2H3zm0-8h2V7H3zm4 4h14v-2H7zm0 4h14v-2H7zM7 7v2h14V7z',
+  fuel: 'M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11A2.5 2.5 0 0 0 15.5 9 2.5 2.5 0 0 0 18 11.5c.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5a2.5 2.5 0 0 0 5 0V9c0-.69-.28-1.32-.73-1.77M12 10H6V5h6zm6 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1',
+  food: 'M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4',
+  wc: 'M5.5 22v-7.5H4V9c0-1.1.9-2 2-2h3c1.1 0 2 .9 2 2v5.5H9.5V22zM18 22v-6h3l-2.54-7.63A2.01 2.01 0 0 0 16.56 7h-.12a2 2 0 0 0-1.9 1.37L12 16h3v6zM7.5 6c1.11 0 2-.89 2-2s-.89-2-2-2-2 .89-2 2 .89 2 2 2m9 0c1.11 0 2-.89 2-2s-.89-2-2-2-2 .89-2 2 .89 2 2 2',
+  parking: 'M13 3H6v18h4v-6h3c3.31 0 6-2.69 6-6s-2.69-6-6-6m.2 8H10V7h3.2c1.1 0 2 .9 2 2s-.9 2-2 2',
   history: 'M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.95 8.95 0 0 0 13 21a9 9 0 0 0 0-18m-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z',
   // maneuver arrows
   up: 'M11 21V7.83l-4.59 4.58L5 11l7-7 7 7-1.41 1.41L13 7.83V21z',
@@ -285,13 +290,14 @@ function whenMapIdle(fn) {
 function setFollow(on) {
   follow = on;
   $('#recenter').classList.toggle('off', !on);
+  if (on && nav.active) view.manualUntil = 0;
   if (on && here.ll && map) { if (nav.active) followView(17); else map.setView(here.ll, Math.max(map.getZoom(), 15), { animate: true }); }
 }
 $('#recenter').onclick = () => { if (!here.ll) startGeo(true); setFollow(true); };
 
 // ---- Driving view: the map turns so the road ahead points up, the car is an arrow low on the screen ----
 // view.shown is the map's turn in CSS degrees (what leaflet-rotate calls bearing): heading h needs 360 - h.
-const view = { shown: 0, goal: 0, raf: 0, car: 0 };
+const view = { shown: 0, goal: 0, raf: 0, car: 0, nextDist: Infinity, zoomAt: 0, manualUntil: 0, selfZoom: false };
 const canTurn = () => !!(map && map.setBearing && map.options.rotate);
 const headingUpOn = () => canTurn() && nav.active && st.headingUp;
 const wrap360 = a => ((a % 360) + 360) % 360;
@@ -334,9 +340,24 @@ function carHeading() {
   }
   return here.heading != null ? here.heading : view.car;
 }
+// zoom like a car navigation: far out when fast, in close for a turn. A zoom the driver made is left alone for 20 s.
+function wantZoom(minZoom) {
+  const cur = map.getZoom();
+  if (nav.active && Date.now() < view.manualUntil) return cur;
+  if (!nav.active || st.autoZoom === false) return Math.max(cur, minZoom || 16);
+  const kmh = here.speed != null && here.speed > 0 ? here.speed * 3.6 : 0;
+  let z = kmh >= 80 ? 15 : kmh >= 45 ? 16 : 17;
+  const turn = view.nextDist <= 200;
+  if (turn) z = Math.min(18, z + 1);
+  // zoom in for a turn at once; otherwise change at most every 5 s so the map does not breathe
+  if (z !== cur && !(turn && z > cur) && Date.now() - view.zoomAt < 5000) return cur;
+  if (z !== cur) view.zoomAt = Date.now();
+  return z;
+}
 function followView(minZoom) {
   if (!map || !here.ll || map._animatingZoom) return; // mid-zoom the zoom level is stale: wait, zoomend calls us again
-  const z = Math.max(map.getZoom(), minZoom || 16);
+  const z = wantZoom(minZoom);
+  view.selfZoom = z !== map.getZoom();
   let c = here.ll;
   if (headingUpOn()) {
     const target = carHeading();
@@ -348,7 +369,10 @@ function followView(minZoom) {
   } else view.car = here.heading != null ? here.heading : view.car;
   map.setView(c, z, { animate: true });
 }
-if (map) map.on('zoomend', () => { if (nav.active && follow) followView(16); });
+if (map) {
+  map.on('zoomstart', () => { if (!view.selfZoom) view.manualUntil = Date.now() + 20000; });
+  map.on('zoomend', () => { view.selfZoom = false; if (nav.active && follow) followView(16); });
+}
 function drawMe() {
   if (!map || !here.ll) return;
   if (!meMarker) {
@@ -692,7 +716,7 @@ function drawStops() {
 }
 $('#rcAddStop').onclick = () => {
   openSheet(`<h2>เพิ่มจุดแวะ</h2>
-    <button class="set-row ritem" id="asEv"><span class="ic ev-ic" data-i="bolt"></span><div class="grow"><div class="t">ที่ชาร์จระหว่างทาง</div></div></button>
+    <button class="set-row ritem" id="asEv"><span class="ic ev-ic" data-i="bolt"></span><div class="grow"><div class="t">ที่ชาร์จ ปั๊ม ร้านอาหาร ระหว่างทาง</div></div></button>
     <button class="set-row ritem" id="asSearch"><span class="ic" data-i="search"></span><div class="grow"><div class="t">ค้นหาสถานที่</div><div class="muted">หรือกดค้างบนแผนที่</div></div></button>
     ${st.recentDest.filter(d => d.name !== nav.dest?.name).slice(0, 5).map((d, i) => `<button class="set-row ritem" data-asrecent="${st.recentDest.indexOf(d)}"><span class="ic" data-i="history"></span><div class="grow"><div class="t ellipsis">${esc(d.name)}</div></div></button>`).join('')}
     <div class="sheet-actions"><button class="btn" data-close>ยกเลิก</button></div>`, s => {
@@ -772,7 +796,7 @@ for (const [id, kind] of [['qHome', 'home'], ['qWork', 'work']]) {
 // ===================================================================
 // Backup: one text code carries the settings, apps, home/work and recent places to another device
 // ===================================================================
-const BACKUP_KEYS = ['headingUp', 'ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
+const BACKUP_KEYS = ['headingUp', 'autoZoom', 'ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
 function backupCode() {
   const o = {};
   BACKUP_KEYS.forEach(k => o[k] = st[k]);
@@ -791,7 +815,7 @@ function readBackup(text) {
     ? { lat: v.lat, lng: v.lng, name: str(v.name, 80) || 'ตำแหน่งที่บันทึกไว้' } : null;
   const out = {};
   if (Number.isFinite(o.ratio)) out.ratio = Math.min(80, Math.max(20, Math.round(o.ratio)));
-  for (const k of ['swapped', 'voice', 'evPins', 'headingUp']) if (typeof o[k] === 'boolean') out[k] = o[k];
+  for (const k of ['swapped', 'voice', 'evPins', 'headingUp', 'autoZoom']) if (typeof o[k] === 'boolean') out[k] = o[k];
   if (o.stack === null || typeof o.stack === 'boolean') out.stack = o.stack;
   if (['map', 'split', 'media'].includes(o.mode)) out.mode = o.mode;
   if (o.avoid && typeof o.avoid === 'object') out.avoid = { toll: !!o.avoid.toll, motorway: !!o.avoid.motorway, ferry: !!o.avoid.ferry };
@@ -846,26 +870,43 @@ function backupSheet() {
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 // [OSM socket tag, label, DC fast charging]
 const SOCKETS = [['type2_combo', 'CCS2', true], ['chademo', 'CHAdeMO', true], ['gb_dc', 'GB/T DC', true], ['type2', 'Type 2', false], ['type2_cable', 'Type 2', false], ['type1', 'Type 1', false], ['gb_ac', 'GB/T AC', false]];
-const ev = { open: false, where: 'near', dc: false, all: [], markers: [], seq: 0, sel: null };
+const ev = { open: false, cat: 'ev', where: 'near', dc: false, all: [], markers: [], seq: 0, sel: null };
 async function overpass(q) {
   for (const u of OVERPASS) {
     try { return await getJSON(u, 25000, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) }); } catch {}
   }
   throw new Error('overpass');
 }
-function parseStation(e) {
+const CATS = {
+  ev: { label: 'ที่ชาร์จ', icon: 'bolt', sel: '["amenity"="charging_station"]', near: 15000, corridor: 3000, window: Infinity, google: 'สถานีชาร์จรถไฟฟ้า' },
+  fuel: { label: 'ปั๊มน้ำมัน', icon: 'fuel', sel: '["amenity"="fuel"]', near: 8000, corridor: 1500, window: 60000, google: 'ปั๊มน้ำมัน' },
+  food: { label: 'ร้านอาหาร', icon: 'food', sel: '["amenity"~"^(restaurant|fast_food|cafe|food_court)$"]', near: 2500, corridor: 600, window: 15000, google: 'ร้านอาหาร' },
+  toilet: { label: 'ห้องน้ำ', icon: 'wc', sel: '["amenity"="toilets"]', near: 8000, corridor: 1500, window: 60000, google: 'ห้องน้ำสาธารณะ' },
+  parking: { label: 'ที่จอดรถ', icon: 'parking', sel: '["amenity"="parking"]["access"!~"^(private|customers|permit)$"]["parking"!~"^(street_side|lane)$"]', near: 2500, corridor: 600, window: 15000, google: 'ที่จอดรถ' }
+};
+// a few facts worth a chip, from the OpenStreetMap tags
+function placeTags(t, cat) {
+  const out = [];
+  if (t.opening_hours === '24/7') out.push('24 ชม.');
+  if (cat === 'fuel') { if (t['fuel:diesel'] === 'yes') out.push('ดีเซล'); if (['fuel:e10', 'fuel:octane_91', 'fuel:octane_95'].some(k => t[k] === 'yes')) out.push('แก๊สโซฮอล์'); }
+  if (cat === 'food') (t.cuisine || '').split(';').slice(0, 2).forEach(c => c && out.push(c.replace(/_/g, ' ')));
+  if (cat === 'parking') { if (t.fee === 'no') out.push('ฟรี'); else if (t.fee === 'yes') out.push('มีค่าบริการ'); if (t.capacity) out.push(t.capacity + ' คัน'); }
+  if (cat === 'toilet' && t.fee === 'yes') out.push('มีค่าบริการ');
+  return out;
+}
+function parseStation(e, cat = 'ev') {
   const t = e.tags || {};
   const sockets = [];
-  for (const [k, label, dc] of SOCKETS) {
+  if (cat === 'ev') for (const [k, label, dc] of SOCKETS) {
     const n = t['socket:' + k];
     if (!n || n === 'no' || n === '0' || sockets.some(s => s.label === label)) continue;
     const out = parseFloat(t['socket:' + k + ':output']);
     sockets.push({ label, dc, kw: isNaN(out) ? null : out });
   }
   return {
-    id: e.type + e.id, lat: e.lat ?? e.center?.lat, lng: e.lon ?? e.center?.lon,
-    name: t['name:th'] || t.name || t.brand || t.operator || 'สถานีชาร์จ',
-    op: t.operator || t.brand || '', sockets, dc: sockets.some(s => s.dc)
+    id: e.type + e.id, lat: e.lat ?? e.center?.lat, lng: e.lon ?? e.center?.lon, cat,
+    name: t['name:th'] || t.name || t.brand || t.operator || (cat === 'ev' ? 'สถานีชาร์จ' : CATS[cat].label),
+    op: t.operator || t.brand || '', sockets, tags: placeTags(t, cat), dc: sockets.some(s => s.dc)
   };
 }
 // distance from a point to the route and how far along the route it sits
@@ -913,10 +954,12 @@ if (map) {
     return b.dataset.pstop ? addStop(evAsPlace(s)) : pickDest(evAsPlace(s));
   });
 }
-function openEv(where) {
+function openEv(where, cat) {
+  if (cat) ev.cat = cat;
   ev.open = true; clearPins(); ev.where = where === 'route' && nav.route ? 'route' : 'near';
   $('#evCard').hidden = false; $('#mapPane').classList.add('ev-open');
   $('#evWhere [data-where="route"]').disabled = !nav.route;
+  $('#evCats').innerHTML = Object.entries(CATS).map(([k, c]) => `<button data-cat="${k}" class="chip-btn${k === ev.cat ? ' on' : ''}">${svg(c.icon)}${c.label}</button>`).join('');
   loadEv();
 }
 function closeEv() {
@@ -924,23 +967,36 @@ function closeEv() {
   $('#evCard').hidden = true; $('#mapPane').classList.remove('ev-open');
   ev.markers.forEach(m => m.remove()); ev.markers = [];
 }
+// the part of the route still ahead (within the category's window), thinned to at most 80 points
+function routeAhead(window_) {
+  const { line, cum } = nav, from = nav.active ? progAlong : 0;
+  let i = nav.active ? Math.max(0, nav.seg) : 0, j = i;
+  while (j < line.length - 1 && cum[j] - from < window_) j++;
+  const stride = Math.max(1, Math.ceil((j - i + 1) / 80)), pts = [];
+  for (let k = i; k <= j; k += stride) pts.push(line[k]);
+  if (pts[pts.length - 1] !== line[j]) pts.push(line[j]);
+  if (pts.length < 2) pts.push(pts[0]);
+  return pts;
+}
 async function loadEv() {
+  const cat = CATS[ev.cat];
   $$('#evWhere button').forEach(b => b.classList.toggle('on', b.dataset.where === ev.where));
-  $('#evList').innerHTML = '<div class="muted center">กำลังหาที่ชาร์จ…</div>';
+  $$('#evCats [data-cat]').forEach(b => b.classList.toggle('on', b.dataset.cat === ev.cat));
+  $('#evTitle').textContent = cat.label; setIcon($('#evIc'), cat.icon);
+  $('#evDc').hidden = ev.cat !== 'ev';
+  $('.ev-credit').hidden = ev.cat !== 'ev'; // the DC list credit belongs to chargers only
+  $('#evList').innerHTML = `<div class="muted center">กำลังหา${cat.label}…</div>`;
   ev.fitted = false;
-  const seq = ++ev.seq;
-  let q;
-  if (ev.where === 'route') {
-    const lats = nav.line.map(p => p[0]), lngs = nav.line.map(p => p[1]), pad = 0.03;
-    q = `[out:json][timeout:25];nwr["amenity"="charging_station"](${Math.min(...lats) - pad},${Math.min(...lngs) - pad},${Math.max(...lats) + pad},${Math.max(...lngs) + pad});out center tags 400;`;
-  } else {
-    const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
-    q = `[out:json][timeout:25];nwr["amenity"="charging_station"](around:15000,${c[0]},${c[1]});out center tags 150;`;
-  }
+  const seq = ++ev.seq, kind = ev.cat;
   const c = here.ll || [map.getCenter().lat, map.getCenter().lng];
+  const ahead = ev.where === 'route' ? routeAhead(cat.window) : null;
+  const q = ahead
+    ? `[out:json][timeout:25];nwr${cat.sel}(around:${cat.corridor},${ahead.map(p => p[0].toFixed(5) + ',' + p[1].toFixed(5)).join(',')});out center tags 300;`
+    : `[out:json][timeout:25];nwr${cat.sel}(around:${cat.near},${c[0]},${c[1]});out center tags 150;`;
+  const from = nav.active ? progAlong : 0;
   const keep = list => {
-    if (ev.where === 'route') {
-      list = list.map(s => ({ ...s, ...nearRoute([s.lat, s.lng]) })).filter(s => s.d <= 3000 && (!nav.active || s.along > progAlong));
+    if (ahead) {
+      list = list.map(s => ({ ...s, ...nearRoute([s.lat, s.lng]) })).filter(s => s.d <= cat.corridor && s.along >= from && s.along <= from + cat.window && (!nav.active || s.along > progAlong));
       list.sort((a, b) => a.along - b.along);
     } else {
       list.forEach(s => s.dist = haversine(c, [s.lat, s.lng]));
@@ -948,13 +1004,13 @@ async function loadEv() {
     }
     return list;
   };
-  // bundled DC list shows at once (works offline); OpenStreetMap adds AC chargers and anything newer when it answers
-  const osmReq = overpass(q).then(j => j.elements.map(parseStation).filter(s => s.lat != null), () => null);
-  const local = await loadDc();
+  const osmReq = overpass(q).then(j => j.elements.map(e => parseStation(e, kind)).filter(s => s.lat != null), () => null);
+  // charging: the bundled DC list shows at once (works offline); OpenStreetMap adds AC chargers and anything newer
+  const local = kind === 'ev' ? await loadDc() : [];
   if (seq !== ev.seq) return;
   let box = null;
-  if (ev.where === 'route') { const lats = nav.line.map(p => p[0]), lngs = nav.line.map(p => p[1]); box = [Math.min(...lats) - .03, Math.min(...lngs) - .03, Math.max(...lats) + .03, Math.max(...lngs) + .03]; }
-  const dLat = 15000 / 111000, dLng = 15000 / (111000 * Math.cos(c[0] * Math.PI / 180));
+  if (ahead) { const lats = ahead.map(p => p[0]), lngs = ahead.map(p => p[1]); box = [Math.min(...lats) - .03, Math.min(...lngs) - .03, Math.max(...lats) + .03, Math.max(...lngs) + .03]; }
+  const dLat = cat.near / 111000, dLng = cat.near / (111000 * Math.cos(c[0] * Math.PI / 180));
   const near = local.filter(s => box ? s.lat >= box[0] && s.lat <= box[2] && s.lng >= box[1] && s.lng <= box[3] : Math.abs(s.lat - c[0]) <= dLat && Math.abs(s.lng - c[1]) <= dLng);
   const build = osm => {
     // an OpenStreetMap entry within 80 m of a bundled one is the same place
@@ -965,14 +1021,14 @@ async function loadEv() {
   if (local.length) build(null);
   const osm = await osmReq;
   if (seq !== ev.seq) return;
-  if (!local.length && !osm) { $('#evList').innerHTML = '<div class="muted center">หาที่ชาร์จไม่ได้ ตรวจสอบอินเทอร์เน็ต หรือค้นใน Google Maps</div>'; return; }
-  if (osm) build(osm);
+  if (!local.length && !osm) { $('#evList').innerHTML = `<div class="muted center">หา${cat.label}ไม่ได้ ตรวจสอบอินเทอร์เน็ต หรือค้นใน Google Maps</div>`; return; }
+  if (osm || !local.length) build(osm);
 }
 let dcPromise;
 // DC stations compiled by Piyamate Wisanuvej (data/dc-stations.json, built with tools/kml-to-json.py)
 function loadDc() {
   return dcPromise || (dcPromise = fetch('data/dc-stations.json').then(r => r.ok ? r.json() : Promise.reject()).then(j => j.s.map((r, i) => ({
-    id: 'L' + i, lat: r[0], lng: r[1], name: r[2] || r[3] || 'สถานีชาร์จ', op: r[4] || '',
+    id: 'L' + i, cat: 'ev', tags: [], lat: r[0], lng: r[1], name: r[2] || r[3] || 'สถานีชาร์จ', op: r[4] || '',
     sockets: r[5].map(k => ({ label: k[0], dc: !!k[2], kw: k[1] || null })).concat(r[5].length ? [] : [{ label: 'DC', dc: true, kw: null }]), dc: true
   }))).catch(() => { dcPromise = null; return []; }));
 }
@@ -980,7 +1036,7 @@ function renderEv() {
   const list = ev.all.filter(s => !ev.dc || s.dc);
   ev.markers.forEach(m => m.remove()); ev.markers = [];
   if (map) list.forEach(s => {
-    const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin${s.dc ? ' dc' : ''}">${svg('bolt')}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(map);
+    const m = L_.marker([s.lat, s.lng], { icon: L_.divIcon({ className: '', html: `<div class="ev-pin c-${s.cat}${s.dc ? ' dc' : ''}">${svg(CATS[s.cat].icon)}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(map);
     m.on('click', () => selectEv(s.id, true)); ev.markers.push(m);
   });
   const canStop = !!nav.dest;
@@ -988,12 +1044,12 @@ function renderEv() {
     const where = ev.where === 'route'
       ? `ห่างเส้นทาง ${fmtDist(s.d)} · อีก ${fmtDist(Math.max(0, s.along - (nav.active ? progAlong : 0)))}`
       : fmtDist(s.dist);
-    const chips = s.sockets.map(k => `<span class="chip${k.dc ? ' ok' : ''}">${esc(k.label)}${k.kw ? ' ' + k.kw + ' kW' : ''}</span>`).join('') || '<span class="chip">ไม่ระบุหัวชาร์จ</span>';
+    const chips = s.sockets.map(k => `<span class="chip${k.dc ? ' ok' : ''}">${esc(k.label)}${k.kw ? ' ' + k.kw + ' kW' : ''}</span>`).join('') + s.tags.map(t => `<span class="chip">${esc(t)}</span>`).join('') || (s.cat === 'ev' ? '<span class="chip">ไม่ระบุหัวชาร์จ</span>' : '');
     return `<div class="ev-item${ev.sel === s.id ? ' on' : ''}" data-ev="${esc(s.id)}">
       <div class="grow"><div class="t ellipsis">${esc(s.name)}</div><div class="muted ellipsis">${esc([s.op !== s.name ? s.op : '', where].filter(Boolean).join(' · '))}</div><div class="chips">${chips}</div></div>
       ${canStop ? `<button class="btn primary" data-evstop="${esc(s.id)}">แวะ</button>` : `<button class="btn primary" data-evgo="${esc(s.id)}">ไปที่นี่</button>`}
     </div>`;
-  }).join('') : `<div class="muted center">ไม่พบที่ชาร์จ${ev.dc ? 'แบบ DC' : ''}${ev.where === 'route' ? 'ใกล้เส้นทาง' : 'ในรัศมี 15 กม.'} ข้อมูลอาจไม่ครบ ลองค้นใน Google Maps</div>`;
+  }).join('') : `<div class="muted center">ไม่พบ${CATS[ev.cat].label}${ev.dc ? 'แบบ DC' : ''}${ev.where === 'route' ? 'ใกล้เส้นทาง' : 'ในรัศมี ' + CATS[ev.cat].near / 1000 + ' กม.'} ข้อมูลอาจไม่ครบ ลองค้นใน Google Maps</div>`;
   // show the nearest stations (and the car) beside the list
   if (map && list.length && !ev.fitted) {
     ev.fitted = true;
@@ -1019,7 +1075,7 @@ function selectEv(id, scroll) {
   if (scroll) $(`.ev-item[data-ev="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
   else if (s && map) { setFollow(false); map.panTo([s.lat, s.lng]); }
 }
-const evAsPlace = s => ({ lat: s.lat, lng: s.lng, name: s.name, sub: s.sockets.map(k => k.label).join(', ') || 'สถานีชาร์จ' });
+const evAsPlace = s => ({ lat: s.lat, lng: s.lng, name: s.name, sub: s.sockets.map(k => k.label).join(', ') || s.op || CATS[s.cat].label });
 $('#evList').addEventListener('click', e => {
   const stop = e.target.closest('[data-evstop]'), go = e.target.closest('[data-evgo]');
   const s = ev.all.find(x => x.id === (stop || go)?.dataset[stop ? 'evstop' : 'evgo']);
@@ -1029,7 +1085,8 @@ $('#evList').addEventListener('click', e => {
 $('#evWhere').addEventListener('click', e => { const b = e.target.closest('[data-where]'); if (b && !b.disabled && b.dataset.where !== ev.where) { ev.where = b.dataset.where; loadEv(); } });
 $('#evDc').onclick = () => { ev.dc = !ev.dc; $('#evDc').setAttribute('aria-pressed', ev.dc); renderEv(); };
 $('#evX').onclick = closeEv;
-$('#evGoogle').onclick = () => { closeEv(); gmapsSearch('สถานีชาร์จรถไฟฟ้า'); };
+$('#evCats').addEventListener('click', e => { const b = e.target.closest('[data-cat]'); if (b && b.dataset.cat !== ev.cat) { ev.cat = b.dataset.cat; loadEv(); } });
+$('#evGoogle').onclick = () => { closeEv(); gmapsSearch(CATS[ev.cat].google); };
 $('#evBtn').onclick = () => openEv(nav.route ? 'route' : 'near');
 $('#nfEv').onclick = () => openEv('route');
 
@@ -1077,6 +1134,35 @@ function stopNav(silent) {
   keepAwake(false);
 }
 $('#nfStop').onclick = () => { stopNav(); clearRoute(); };
+// all remaining steps, and the whole route at a glance
+function stepsSheet() {
+  if (!nav.active || !nav.route) return;
+  const rows = nav.steps.map((s, i) => [s, i]).filter(([, i]) => i >= nav.step);
+  const total = nav.cum[nav.cum.length - 1], remain = Math.max(0, total - progAlong), secs = nav.route.duration * (remain / Math.max(1, total));
+  openSheet(`<h2>เส้นทางที่เหลือ</h2>
+    <div class="muted st-sum">${fmtDist(remain)} · ${fmtDur(secs)} · ถึง ${fmtClock(new Date(Date.now() + secs * 1000))}</div>
+    <div class="sheet-actions" style="justify-content:flex-start;margin:8px 0 4px"><button class="btn" id="stOverview"><span class="ic" data-i="map"></span>ภาพรวมเส้นทาง</button></div>
+    ${rows.map(([s, i]) => `<button class="set-row ritem st-row" data-st="${i}"><span class="ic st-ic">${arrowFor(s)}</span><div class="grow"><div class="t">${esc(instr(s))}</div></div><span class="muted">${fmtDist(Math.max(0, nav.stepAt[i] - progAlong))}</span></button>`).join('')}
+    <div class="sheet-actions"><button class="btn primary" data-close>ปิด</button></div>`, sh => {
+    sh.querySelector('#stOverview').onclick = () => { closeSheet(); overview(); };
+    sh.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
+      const st_ = nav.steps[+b.dataset.st]; closeSheet();
+      setFollow(false); turnTo(0, true);
+      map.setView([st_.maneuver.location[1], st_.maneuver.location[0]], 17, { animate: true });
+      toast('กดปุ่มตำแหน่งเพื่อกลับไปนำทาง', 2500);
+    });
+  });
+}
+function overview() {
+  if (!nav.route || !map) return;
+  setFollow(false); turnTo(0, true); // north up, the whole way ahead in view, clear of the banner and the bottom card
+  const pts = [here.ll, ...nav.line.slice(Math.max(0, nav.seg))].filter(Boolean);
+  const bn = $('#navBanner').getBoundingClientRect(), ft = $('#navFoot').getBoundingClientRect(), m = $('#map').getBoundingClientRect();
+  map.fitBounds(L_.latLngBounds(pts), { paddingTopLeft: [30, bn.bottom - m.top + 20], paddingBottomRight: [80, m.bottom - ft.top + 20], animate: true });
+  toast('กดปุ่มตำแหน่งเพื่อกลับไปนำทาง', 2500);
+}
+$('#nfSteps').onclick = stepsSheet;
+$('#navBanner').onclick = stepsSheet;
 // compass: switch between "map turns with the car" and "north always up"
 $('#compass').onclick = () => {
   st.headingUp = !st.headingUp; save();
@@ -1132,6 +1218,7 @@ function navTick() {
   setHtml($('#nbArrow'), arrowFor(step));
   setText($('#nbDist'), fmtDist(dist));
   setText($('#nbText'), instr(step));
+  view.nextDist = dist;
   const nxt = nav.steps[i + 1];
   const then = nxt && nav.stepAt[i + 1] - nav.stepAt[i] < 250;
   $('#nbThen').hidden = !then;
@@ -1372,6 +1459,7 @@ function settingsSheet() {
     <h3>การนำทาง</h3>
     ${placeRow('home')}${placeRow('work')}
     <label class="set-row"><span class="t">เสียงนำทาง</span><input type="checkbox" class="toggle" id="sVoice" ${st.voice ? 'checked' : ''}></label>
+    <label class="set-row"><span class="t">ซูมตามความเร็วและทางเลี้ยว</span><input type="checkbox" class="toggle" id="sAutoZoom" ${st.autoZoom !== false ? 'checked' : ''}></label>
     <label class="set-row"><span class="t">แสดงที่ชาร์จบนแผนที่</span><input type="checkbox" class="toggle" id="sEvPins" ${st.evPins ? 'checked' : ''}></label>
     <h3>หน้าจอ</h3>
     <div class="set-row"><span class="t">แบ่งจอ</span><div class="seg">${segBtn('auto', 'อัตโนมัติ')}${segBtn('side', 'ซ้าย-ขวา')}${segBtn('stack', 'บน-ล่าง')}</div></div>
@@ -1383,6 +1471,7 @@ function settingsSheet() {
     <div class="sheet-actions"><button class="btn primary" data-close>เสร็จ</button></div>`, s => {
     s.querySelectorAll('[data-place]').forEach(b => b.onclick = () => placeSheet(b.dataset.place, true));
     s.querySelector('#sVoice').onchange = e => { st.voice = e.target.checked; save(); setVoiceIcon(); };
+    s.querySelector('#sAutoZoom').onchange = e => { st.autoZoom = e.target.checked; save(); };
     s.querySelector('#sEvPins').onchange = e => { st.evPins = e.target.checked; save(); updatePins(); };
     s.querySelectorAll('[data-layout]').forEach(b => b.onclick = () => {
       st.stack = { auto: null, side: false, stack: true }[b.dataset.layout]; save(); applyLayout();

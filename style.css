@@ -116,7 +116,7 @@ body.idle #search.autohide{transform:translateY(-8px)}
 .nb-text{font-size:18px;color:#d1d1d6;margin-top:2px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .nb-then{display:flex;align-items:center;gap:8px;padding:10px 20px;border-top:1px solid var(--line);color:var(--muted);font-size:15px}
 .nb-then svg[aria-hidden]{width:20px;height:20px}
-#navFoot{z-index:600;left:14px;bottom:14px;width:min(460px,calc(100% - 28px));display:flex;align-items:center;gap:12px;padding:10px 10px 10px 14px}
+#navFoot{z-index:600;left:14px;bottom:14px;width:min(540px,calc(100% - 28px));display:flex;align-items:center;gap:8px;padding:10px 10px 10px 14px}
 #speed{display:flex;flex-direction:column;align-items:center;min-width:58px;padding-right:12px;border-right:1px solid var(--line)}
 #speed b{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
 #speed small{font-size:10px;color:var(--muted)}
@@ -235,3 +235,19 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 .me .car{display:none}
 .me.nav i,.me.nav b{display:none}
 .me.nav .car{display:block;position:absolute;left:-9px;top:-9px;width:40px;height:40px;fill:var(--accent);stroke:#fff;stroke-width:1.6px;stroke-linejoin:round;paint-order:stroke;filter:drop-shadow(0 2px 5px rgba(0,0,0,.7))}
+/* categories along the route */
+.ev-cats{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.ev-cats::-webkit-scrollbar{display:none}
+.ev-cats .chip-btn{flex:none;background:var(--surface-2)}
+.ev-cats .chip-btn.on{background:var(--raise);border-color:var(--fg)}
+.ev-pin.c-fuel{background:#ff9f0a}
+.ev-pin.c-food{background:#ff6961}
+.ev-pin.c-toilet{background:#64d2ff}
+.ev-pin.c-parking{background:#bfc3cc}
+#navBanner{cursor:pointer}
+.st-row .st-ic svg[aria-hidden]{width:30px;height:30px;color:var(--fg)}
+.st-row .ic{width:34px;justify-content:center}
+.st-sum{margin:2px 0 4px}
+#navFoot .icon-btn{width:42px;height:42px;flex:none}
+/* while navigating the list sits above the bottom card, not under it */
+#mapPane.navigating #evCard{bottom:96px;max-height:calc(100% - 226px)}
