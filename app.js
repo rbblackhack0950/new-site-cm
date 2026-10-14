@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 35;
+const BUILD = 36;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -299,13 +299,13 @@ function setFollow(on) {
   follow = on;
   $('#recenter').classList.toggle('off', !on);
   if (on && nav.active) view.manualUntil = 0;
-  if (on && here.ll && map) { if (nav.active) followView(17); else map.setView(here.ll, Math.max(map.getZoom(), 15), { animate: true }); }
+  if (on && here.ll && map) { if (nav.active) followView(); else map.setView(here.ll, Math.max(map.getZoom(), 15), { animate: true }); }
 }
 $('#recenter').onclick = () => { if (!here.ll) startGeo(true); setFollow(true); };
 
 // ---- Driving view: the map turns so the road ahead points up, the car is an arrow low on the screen ----
 // view.shown is the map's turn in CSS degrees (what leaflet-rotate calls bearing): heading h needs 360 - h.
-const view = { shown: 0, goal: 0, raf: 0, car: 0, nextDist: Infinity, zoomAt: 0, manualUntil: 0, selfZoom: false };
+const view = { shown: 0, goal: 0, raf: 0, car: 0, nextDist: Infinity, zoomAt: 0, manualUntil: 0, selfZoom: false, zoom: 0 };
 const canTurn = () => !!(map && map.setBearing && map.options.rotate);
 const headingUpOn = () => canTurn() && nav.active && st.headingUp;
 const wrap360 = a => ((a % 360) + 360) % 360;
@@ -362,31 +362,84 @@ function wantZoom(minZoom) {
   if (z !== cur) view.zoomAt = Date.now();
   return z;
 }
-function followView(minZoom) {
-  if (!map || !here.ll || map._animatingZoom) return; // mid-zoom the zoom level is stale: wait, zoomend calls us again
-  const z = wantZoom(minZoom);
-  view.selfZoom = z !== map.getZoom();
-  let c = here.ll;
-  if (headingUpOn()) {
-    const target = carHeading();
-    view.car = wrap360(view.car + angDiff(target, view.car) * .5); // steady, not twitchy
-    if (Math.abs(angDiff(360 - view.car, view.goal)) >= 2) turnTo(360 - view.car);
-    // keep the car in the lower part of the map: aim the view ahead of it, along the screen's "up"
-    const h = (360 - view.shown) * Math.PI / 180, dy = map.getSize().y * .2, px = map.project(c, z);
-    c = map.unproject(px.add([Math.sin(h) * dy, -Math.cos(h) * dy]), z);
-  } else view.car = here.heading != null ? here.heading : view.car;
-  map.setView(c, z, { animate: true });
+// ---- Smooth driving: the car glides along the route at the GPS speed, drawn every frame, and the camera rides with it ----
+// GPS arrives about once a second, so jumping to each fix looks like stepping. Instead the car's place on the route
+// (anim.along, in metres) advances every frame at the measured speed and is eased toward where the newest fix says it is.
+const anim = { on: false, raf: 0, t: 0, along: 0, fixAlong: 0, fixAt: 0, speed: 0, onRoute: true, free: null, jump: true, ci: 0, prevAlong: 0, prevAt: 0, ll: null };
+const lerpAng = (from, to, k) => wrap360(from + angDiff(to, from) * k);
+function pointAt(along) {
+  const { line, cum } = nav;
+  if (line.length < 2) return line[0] || here.ll;
+  along = Math.max(0, Math.min(cum[cum.length - 1], along));
+  let i = Math.min(anim.ci, line.length - 2);
+  while (i > 0 && cum[i] > along) i--;
+  while (i < line.length - 2 && cum[i + 1] < along) i++;
+  anim.ci = i;
+  const d = cum[i + 1] - cum[i], f = d ? (along - cum[i]) / d : 0;
+  return [line[i][0] + (line[i + 1][0] - line[i][0]) * f, line[i][1] + (line[i + 1][1] - line[i][1]) * f];
 }
+// put the camera over `ll`; with the map turned, the car rides in the lower part of the screen
+function placeCamera(ll, animate) {
+  if (!map || !ll || map._animatingZoom) return;
+  const manual = nav.active && Date.now() < view.manualUntil; // the driver zoomed: leave it
+  const z = manual ? map.getZoom() : anim.on && view.zoom ? view.zoom : wantZoom(16);
+  view.selfZoom = z !== map.getZoom();
+  let c = ll;
+  if (headingUpOn()) {
+    const h = (360 - view.shown) * Math.PI / 180, dy = map.getSize().y * .2, px = map.project(ll, z); // screen "up" in world terms
+    c = map.unproject(px.add([Math.sin(h) * dy, -Math.cos(h) * dy]), z);
+  }
+  map.setView(c, z, { animate: !!animate || view.selfZoom });
+}
+function followView() { placeCamera(anim.ll || here.ll, true); }
+function frame(now) {
+  anim.raf = requestAnimationFrame(frame);
+  const dt = Math.min(.1, (now - anim.t) / 1000) || .016; anim.t = now;
+  if (!nav.active || !nav.route || !here.ll || !meMarker) return;
+  let ll;
+  if (anim.onRoute) {
+    if (anim.jump || Math.abs(anim.fixAlong - anim.along) > 80) { anim.along = anim.fixAlong; anim.jump = false; } // new route or a gap: do not glide across it
+    else {
+      const age = Math.min(3, (Date.now() - anim.fixAt) / 1000);          // stop guessing if the GPS goes quiet
+      const target = anim.fixAlong + anim.speed * age, err = target - anim.along;
+      if (err < -8) anim.along += err * Math.min(1, dt * 1.2);             // well ahead of the fix (braked hard): ease back
+      else if (anim.speed < .7 && Math.abs(err) < 6) anim.along += err * Math.min(1, dt * 3); // parked: settle, never creep
+      else anim.along += Math.max(0, Math.min(anim.speed * 1.8 + 4, anim.speed + err * 1.5)) * dt;
+    }
+    ll = pointAt(anim.along);
+    anim.free = null;
+  } else {
+    // off the route: glide toward the GPS position instead
+    anim.free = anim.free || here.ll.slice();
+    const k = 1 - Math.exp(-dt / .35);
+    anim.free = [anim.free[0] + (here.ll[0] - anim.free[0]) * k, anim.free[1] + (here.ll[1] - anim.free[1]) * k];
+    ll = anim.free;
+  }
+  anim.ll = ll;
+  meMarker.setLatLng(ll);
+  // heading: the road a little way ahead (steady), or the GPS heading when off the route
+  let target = view.car;
+  if (anim.onRoute) { const p2 = pointAt(Math.min(nav.cum[nav.cum.length - 1], anim.along + 25)); if (Math.abs(p2[0] - ll[0]) + Math.abs(p2[1] - ll[1]) > 1e-6) target = bearing(ll, p2); }
+  else if (here.heading != null) target = here.heading;
+  view.car = lerpAng(view.car, target, 1 - Math.exp(-dt / .25));
+  if (follow) {
+    if (headingUpOn()) { const want = wrap360(360 - view.car); if (Math.abs(angDiff(want, view.shown)) > .15) setTurn(want); }
+    placeCamera(ll, false);
+  }
+  applyArrow();
+}
+function startFrames() { anim.jump = true; anim.free = null; anim.on = true; cancelAnimationFrame(anim.raf); anim.t = performance.now(); anim.raf = requestAnimationFrame(frame); }
+function stopFrames() { anim.on = false; cancelAnimationFrame(anim.raf); anim.raf = 0; anim.ll = null; }
 if (map) {
   map.on('zoomstart', () => { if (!view.selfZoom) view.manualUntil = Date.now() + 20000; });
-  map.on('zoomend', () => { view.selfZoom = false; if (nav.active && follow) followView(16); });
+  map.on('zoomend', () => { view.selfZoom = false; if (nav.active && follow && !anim.on) followView(); });
 }
 function drawMe() {
   if (!map || !here.ll) return;
   if (!meMarker) {
     meMarker = L_.marker(here.ll, { icon: L_.divIcon({ className: '', html: `<div class="me"><b></b><i></i>${svg('nav', ' class="car"')}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
     meEl = meMarker.getElement().firstChild;
-  } else meMarker.setLatLng(here.ll);
+  } else if (!anim.on) meMarker.setLatLng(here.ll);
   meEl.classList.toggle('dir', here.heading != null);
   meEl.classList.toggle('nav', nav.active);
   meEl.firstChild.style.transform = `rotate(${here.heading || 0}deg)`;
@@ -571,7 +624,7 @@ async function route(reroute) {
       const ri = (routerFirst + n) % ROUTERS.length;
       for (const ex of tries) {
         try {
-          j = await getJSON(ROUTERS[ri] + coords + q + (ex.length ? '&exclude=' + ex.join(',') : ''), n ? 15000 : 9000);
+          j = await getJSON(ROUTERS[ri] + coords + q + (ex.length ? '&exclude=' + ex.join(',') : ''), reroute ? (n ? 8000 : 5000) : (n ? 15000 : 9000));
           if (j.code === 'Ok' && j.routes?.length) { used = ex; routerFirst = ri; break search; }
           last = new Error(j.code);
         } catch (e) { last = e; if (!/^HTTP 4/.test(e.message)) break; }
@@ -584,6 +637,11 @@ async function route(reroute) {
     nav.alts = reroute ? [] : j.routes;
     nav.altIdx = 0;
     setRoute(j.routes[0]);
+    if (reroute) {
+      toast('คำนวณเส้นทางใหม่แล้ว', 2000);
+      const s0 = nav.steps[nav.step];
+      speak('คำนวณเส้นทางใหม่แล้ว' + (s0 ? ` อีก ${sayDist(Math.max(0, nav.stepAt[nav.step] - progAlong))} ${instr(s0)}` : ''));
+    }
     if (!reroute) {
       renderAlts();
       const b = L_.latLngBounds(j.routes.flatMap(r => routeLine(r).line));
@@ -661,6 +719,7 @@ function setRoute(r) {
   const cum = [0];
   for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + haversine(line[i - 1], line[i]));
   Object.assign(nav, { route: r, steps, line, cum, stepAt: stepAt.map(i => cum[i]), seg: 0, step: 1, said: {}, off: 0 });
+  anim.jump = true; anim.ci = 0; anim.prevAt = 0;
   if (map) {
     routeLines.forEach(l => l.remove());
     routeLines = [
@@ -1129,13 +1188,14 @@ function startNav() {
   drawMe(); // the car turns into an arrow
   setFollow(true);
   navTick();
+  startFrames();
   const s = nav.steps[nav.step];
   speak('เริ่มนำทาง ' + (s ? `อีก ${sayDist(nav.stepAt[nav.step] - progAlong)} ${instr(s)}` : ''));
 }
 function stopNav(silent) {
   if (!nav.active) return;
   nav.active = false;
-  turnTo(0); drawMe(); // back to north up
+  stopFrames(); turnTo(0); drawMe(); // back to north up
   $('#mapPane').classList.remove('navigating');
   $('#navBanner').hidden = $('#navFoot').hidden = $('#compass').hidden = true;
   if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); drawAlts(); }
@@ -1195,14 +1255,20 @@ function navTick() {
   progAlong = along;
   const total = cum[cum.length - 1], remain = Math.max(0, total - along);
 
-  // off-route → reroute
-  const tol = Math.max(40, Math.min(here.acc || 0, 80));
+  // off the route: two fixes in a row beyond the tolerance, or one fix well beyond it, starts a new route at once
+  const tol = Math.max(35, Math.min((here.acc || 0) * 1.5, 70));
   nav.off = best.d > tol ? nav.off + 1 : 0;
-  if (nav.off >= 3 && !nav.routing && Date.now() - nav.lastReroute > 8000) {
-    nav.lastReroute = Date.now(); nav.off = 0;
-    $('#nbText').textContent = 'กำลังคำนวณเส้นทางใหม่…';
-    speak('กำลังคำนวณเส้นทางใหม่');
-    route(true);
+  // feed the glide: where the fix is on the route and how fast we are going
+  const now = Date.now();
+  let v = here.speed != null && here.speed >= 0 ? here.speed : 0;
+  if (here.speed == null && anim.prevAt && now > anim.prevAt) v = Math.max(0, (along - anim.prevAlong) / ((now - anim.prevAt) / 1000));
+  anim.prevAlong = along; anim.prevAt = now;
+  Object.assign(anim, { fixAlong: along, fixAt: now, speed: v, onRoute: nav.off === 0 });
+  if ((nav.off >= 2 || best.d > tol * 2.5) && !nav.routing && now - nav.lastReroute > 5000) {
+    nav.lastReroute = now;
+    setText($('#nbText'), 'ออกนอกเส้นทาง กำลังคำนวณเส้นทางใหม่…');
+    speak('ออกนอกเส้นทาง กำลังคำนวณเส้นทางใหม่');
+    route(true); // nav.off stays set, so if this attempt fails the next fix after 5 s tries again
     return;
   }
 
@@ -1228,6 +1294,7 @@ function navTick() {
   setText($('#nbDist'), fmtDist(dist));
   setText($('#nbText'), instr(step));
   view.nextDist = dist;
+  view.zoom = map ? wantZoom(16) : 0;
   const nxt = nav.steps[i + 1];
   const then = nxt && nav.stepAt[i + 1] - nav.stepAt[i] < 250;
   $('#nbThen').hidden = !then;
@@ -1244,7 +1311,7 @@ function navTick() {
   setText($('#nfEta'), 'ถึง ' + fmtClock(new Date(Date.now() + secs * 1000)));
   setText($('#nfMeta'), `${fmtDur(secs)} · ${fmtDist(remain)}`);
   setText($('#speed b'), String(here.speed != null && here.speed >= 0 ? Math.round(here.speed * 3.6) : '–'));
-  if (follow && map) followView(16);
+  if (!anim.on && follow && map) followView();
 }
 
 // ===================================================================
@@ -1534,5 +1601,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, view, onNewVersion, get reloadPending() { return reloadPending; }, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, view, anim, onNewVersion, get reloadPending() { return reloadPending; }, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

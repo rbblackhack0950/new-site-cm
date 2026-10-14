@@ -672,10 +672,10 @@ console.log('Driving view');
   });
   await test('the view keeps turning with the road', async () => {
     const before = await page.evaluate(() => __car.view.shown);
-    for (const p of [[13.7500, 100.5360], [13.7500, 100.5395], [13.7520, 100.5400]]) await setPos(p);
-    await settled(); await page.waitForTimeout(500);
+    for (const p of [[13.7500, 100.5340], [13.7500, 100.5360], [13.7500, 100.5380]]) await setPos(p);
+    await page.waitForTimeout(900);
     const after = await page.evaluate(() => __car.view.shown);
-    assert.ok(Math.abs(((after - before + 540) % 360) - 180) > 20, `turned from ${before} to ${after}`);
+    assert.ok(Math.abs(((after - 270 + 540) % 360) - 180) < 25, `heading east should turn the map to 270, turned from ${before} to ${after}`);
     const r = await ahead();
     assert.ok(r.dy < -10, `still pointing up: ${JSON.stringify(r)}`);
   });
@@ -762,6 +762,20 @@ console.log('Driving view');
     assert.equal(await vis(page, '#evDc'), true);
     await page.click('#evX');
   });
+  await test('the car glides: many small steps between GPS fixes, never backwards', async () => {
+    const pos = d => page.evaluate(d => { const { nav } = __car; let i = 0; while (i < nav.line.length - 2 && nav.cum[i + 1] < d) i++; const f = (d - nav.cum[i]) / (nav.cum[i + 1] - nav.cum[i]); return [nav.line[i][0] + (nav.line[i + 1][0] - nav.line[i][0]) * f, nav.line[i][1] + (nav.line[i + 1][1] - nav.line[i][1]) * f]; }, d);
+    await page.evaluate(() => { __car.anim.jump = true; }); // start from a clean place on the route
+    await setPos(await pos(20), 12); await page.waitForTimeout(700);
+    await page.evaluate(() => { window.__s = []; const f = () => { window.__s.push(__car.anim.along); window.__r = requestAnimationFrame(f); }; f(); });
+    for (const d of [32, 44, 56]) { await setPos(await pos(d), 12); await page.waitForTimeout(850); }
+    const s = await page.evaluate(() => { cancelAnimationFrame(window.__r); return window.__s; });
+    const steps = s.slice(1).map((v, i) => v - s[i]);
+    assert.ok(s.length > 60, 'drawn every frame: ' + s.length + ' samples in 3 s');
+    assert.ok(Math.max(...steps) < 1.5, 'no jumps: biggest step ' + Math.max(...steps).toFixed(2) + ' m');
+    assert.ok(Math.min(...steps) > -0.05, 'never backwards: ' + Math.min(...steps).toFixed(3));
+    assert.ok(steps.filter(x => x > 0.02).length > steps.length * .7, 'moving in most frames');
+    assert.ok(s.at(-1) > 56 && s.at(-1) < 80, 'a little past the last fix (it keeps rolling at the same speed until the next one): ' + s.at(-1).toFixed(1));
+  });
   await test('a new release found mid-drive waits until navigation ends', async () => {
     await page.evaluate(() => { __car.onNewVersion(); });
     await page.waitForTimeout(400);
@@ -784,6 +798,17 @@ console.log('Driving view');
     assert.equal(await page.evaluate(() => __car.st.headingUp), true);
     const v = await page.evaluate(() => ({ shown: __car.view.shown, car: __car.view.car }));
     assert.ok(Math.abs(((v.shown - (360 - v.car) + 540) % 360) - 180) < 4, 'turned to the heading ' + JSON.stringify(v));
+  });
+  await test('off the route: a new route within a couple of fixes, announced and shown', async () => {
+    await page.evaluate(() => { window.__said = []; speechSynthesis.speak = u => window.__said.push(u.text); });
+    const before = counts.osrmUrls.length;
+    await setPos([13.7480, 100.5370], 12); await setPos([13.7480, 100.5372], 12);
+    await page.waitForFunction(n => window.__said.some(t => /ออกนอกเส้นทาง/.test(t)), 0, { timeout: 4000 });
+    await page.waitForFunction(() => /คำนวณเส้นทางใหม่แล้ว/.test(document.querySelector('#toast').textContent) || __said.some(t => /คำนวณเส้นทางใหม่แล้ว/.test(t)), null, { timeout: 5000 });
+    assert.ok(counts.osrmUrls.length > before, 'asked the router again');
+    const u = counts.osrmUrls.slice(before).find(x => /100\.537\d*,13\.748/.test(x));
+    assert.ok(u, 'the new route starts where the car is now');
+    assert.ok((await page.evaluate(() => __said)).some(t => /คำนวณเส้นทางใหม่แล้ว อีก/.test(t)), 'the first instruction of the new route is spoken');
   });
   await test('stopping navigation turns the map back to north up', async () => {
     await page.click('#nfStop'); await settled();
