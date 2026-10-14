@@ -66,6 +66,7 @@
         <button id="nfStop" class="btn danger" aria-label="หยุดนำทาง">หยุด</button>
       </div>
 
+      <button id="compass" class="float fab small" aria-label="ทิศทางแผนที่" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l4.2 10h-8.4z" fill="#e82127"/><path d="M12 22l-4.2-10h8.4z" fill="#f5f5f7"/></svg></button>
       <button id="recenter" class="float fab autohide" aria-label="ตำแหน่งของฉัน" data-i="loc"></button>
       <button id="evBtn" class="float fab autohide" aria-label="ที่ชาร์จรถไฟฟ้า" data-i="bolt"></button>
       <button id="stopMode" class="float chip-btn" hidden><span class="ic" data-i="addStop"></span><span id="stopModeT">เลือกจุดแวะ: ค้นหาหรือกดค้างบนแผนที่</span> <span class="ic" data-i="close"></span></button>
@@ -163,7 +164,7 @@
 // and "slow" when nothing has failed yet. The notice removes itself if the app starts after all.
 (function () {
   var errs = window.__bootErrs = [], t0 = Date.now(), shown = null;
-  window.__want = 31; // must equal BUILD in app.js
+  window.__want = 32; // must equal BUILD in app.js
   addEventListener('error', function (e) {
     var el = e.target;
     if (el && el !== window && (el.src || el.href)) errs.push('โหลดไฟล์ไม่สำเร็จ: ' + (el.src || el.href).split('/').pop());
@@ -206,6 +207,7 @@
 })();
 </script>
 <script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/leaflet/leaflet-rotate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

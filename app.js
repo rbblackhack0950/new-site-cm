@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 31;
+const BUILD = 32;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -30,7 +30,7 @@ const DEFAULT_APPS = [
   { id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com', color: '#1db954', letter: 'S' },
   { id: 'web', name: 'เว็บ', url: '', color: '#2c2d31', icon: 'globe' }
 ];
-const DEF = { ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
+const DEF = { headingUp: true, ratio: 55, swapped: false, stack: null, mode: 'split', voice: true, evPins: true, home: null, work: null, avoid: { toll: false, motorway: false, ferry: false }, recentDest: [], apps: null };
 const st = Object.assign({}, DEF, store.get('carscreen', {}));
 // first run of this version: start from the defaults plus apps added earlier (st.custom)
 if (!Array.isArray(st.apps)) {
@@ -260,7 +260,7 @@ let meMarker, destMarker, routeLines = [], altLines = [], stopMarkers = [], foll
 const nav = { dest: null, stops: [], adding: false, route: null, active: false, line: [], cum: [], stepAt: [], seg: 0, step: 1, said: {}, off: 0, lastReroute: 0, routing: false };
 
 if (L_) {
-  map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
+  map = L_.map('map', { zoomControl: false, attributionControl: true, tapHold: true, rotate: !!L_.Map.prototype.setBearing, bearing: 0, rotateControl: false, touchRotate: false, shiftKeyRotate: false }).setView(store.get('carscreen.view', [13.7563, 100.5018]), 13);
   L_.tileLayer(TILE, { maxZoom: 19, className: 'dark-tiles', updateWhenZooming: false, keepBuffer: 2, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
   map.attributionControl.setPrefix(false);
   // panning pauses follow mode; while navigating it snaps back after a few seconds
@@ -285,19 +285,81 @@ function whenMapIdle(fn) {
 function setFollow(on) {
   follow = on;
   $('#recenter').classList.toggle('off', !on);
-  if (on && here.ll && map) map.setView(here.ll, nav.active ? 17 : Math.max(map.getZoom(), 15), { animate: true });
+  if (on && here.ll && map) { if (nav.active) followView(17); else map.setView(here.ll, Math.max(map.getZoom(), 15), { animate: true }); }
 }
 $('#recenter').onclick = () => { if (!here.ll) startGeo(true); setFollow(true); };
 
+// ---- Driving view: the map turns so the road ahead points up, the car is an arrow low on the screen ----
+// view.shown is the map's turn in CSS degrees (what leaflet-rotate calls bearing): heading h needs 360 - h.
+const view = { shown: 0, goal: 0, raf: 0, car: 0 };
+const canTurn = () => !!(map && map.setBearing && map.options.rotate);
+const headingUpOn = () => canTurn() && nav.active && st.headingUp;
+const wrap360 = a => ((a % 360) + 360) % 360;
+const angDiff = (to, from) => ((to - from + 540) % 360) - 180; // shortest signed turn
 let meEl;
+function applyArrow() {
+  if (!meEl) return;
+  // the arrow points the way the car goes, measured on the screen: its heading minus how far the map is turned
+  const nose = meEl.querySelector('.car');
+  if (nose) nose.style.transform = `rotate(${angDiff(view.car - (360 - view.shown), 0)}deg)`;
+  const c = $('#compass'); if (c) c.firstElementChild.style.transform = `rotate(${view.shown}deg)`;
+}
+function setTurn(t) {
+  view.shown = wrap360(t);
+  if (canTurn()) map.setBearing(view.shown);
+  applyArrow();
+}
+function turnTo(goal, instant) {
+  if (!canTurn()) return;
+  view.goal = wrap360(goal);
+  if (instant) { cancelAnimationFrame(view.raf); view.raf = 0; return setTurn(view.goal); }
+  if (view.raf) return;
+  const step = () => {
+    const d = angDiff(view.goal, view.shown);
+    if (Math.abs(d) < .4) { view.raf = 0; return setTurn(view.goal); }
+    setTurn(view.shown + d * .2);
+    view.raf = requestAnimationFrame(step);
+  };
+  view.raf = requestAnimationFrame(step);
+}
+// which way the car points: along the route when on it (steady), else the GPS heading
+function carHeading() {
+  const { line, cum } = nav;
+  if (nav.route && line.length > 1 && nav.off === 0) {
+    const along = cum[nav.seg], i = nav.seg;
+    let j = i + 1;
+    while (j < line.length - 1 && cum[j] - along < 30) j++;
+    const a = line[i], b = line[j];
+    if (a && b && (a[0] !== b[0] || a[1] !== b[1])) return bearing(a, b);
+  }
+  return here.heading != null ? here.heading : view.car;
+}
+function followView(minZoom) {
+  if (!map || !here.ll || map._animatingZoom) return; // mid-zoom the zoom level is stale: wait, zoomend calls us again
+  const z = Math.max(map.getZoom(), minZoom || 16);
+  let c = here.ll;
+  if (headingUpOn()) {
+    const target = carHeading();
+    view.car = wrap360(view.car + angDiff(target, view.car) * .5); // steady, not twitchy
+    if (Math.abs(angDiff(360 - view.car, view.goal)) >= 2) turnTo(360 - view.car);
+    // keep the car in the lower part of the map: aim the view ahead of it, along the screen's "up"
+    const h = (360 - view.shown) * Math.PI / 180, dy = map.getSize().y * .2, px = map.project(c, z);
+    c = map.unproject(px.add([Math.sin(h) * dy, -Math.cos(h) * dy]), z);
+  } else view.car = here.heading != null ? here.heading : view.car;
+  map.setView(c, z, { animate: true });
+}
+if (map) map.on('zoomend', () => { if (nav.active && follow) followView(16); });
 function drawMe() {
   if (!map || !here.ll) return;
   if (!meMarker) {
-    meMarker = L_.marker(here.ll, { icon: L_.divIcon({ className: '', html: '<div class="me"><b></b><i></i></div>', iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
+    meMarker = L_.marker(here.ll, { icon: L_.divIcon({ className: '', html: `<div class="me"><b></b><i></i>${svg('nav', ' class="car"')}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
     meEl = meMarker.getElement().firstChild;
   } else meMarker.setLatLng(here.ll);
   meEl.classList.toggle('dir', here.heading != null);
+  meEl.classList.toggle('nav', nav.active);
   meEl.firstChild.style.transform = `rotate(${here.heading || 0}deg)`;
+  if (!nav.active && here.heading != null) view.car = here.heading;
+  applyArrow();
 }
 
 let geoId = null;
@@ -710,7 +772,7 @@ for (const [id, kind] of [['qHome', 'home'], ['qWork', 'work']]) {
 // ===================================================================
 // Backup: one text code carries the settings, apps, home/work and recent places to another device
 // ===================================================================
-const BACKUP_KEYS = ['ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
+const BACKUP_KEYS = ['headingUp', 'ratio', 'swapped', 'stack', 'mode', 'voice', 'evPins', 'avoid', 'recentDest', 'home', 'work', 'apps'];
 function backupCode() {
   const o = {};
   BACKUP_KEYS.forEach(k => o[k] = st[k]);
@@ -729,7 +791,7 @@ function readBackup(text) {
     ? { lat: v.lat, lng: v.lng, name: str(v.name, 80) || 'ตำแหน่งที่บันทึกไว้' } : null;
   const out = {};
   if (Number.isFinite(o.ratio)) out.ratio = Math.min(80, Math.max(20, Math.round(o.ratio)));
-  for (const k of ['swapped', 'voice', 'evPins']) if (typeof o[k] === 'boolean') out[k] = o[k];
+  for (const k of ['swapped', 'voice', 'evPins', 'headingUp']) if (typeof o[k] === 'boolean') out[k] = o[k];
   if (o.stack === null || typeof o.stack === 'boolean') out.stack = o.stack;
   if (['map', 'split', 'media'].includes(o.mode)) out.mode = o.mode;
   if (o.avoid && typeof o.avoid === 'object') out.avoid = { toll: !!o.avoid.toll, motorway: !!o.avoid.motorway, ferry: !!o.avoid.ferry };
@@ -817,7 +879,7 @@ function nearRoute(p) {
   return best;
 }
 // Charging stations always on the map (bundled DC list): zoomed in enough, the ones in view
-const PIN_ZOOM = 11, PIN_MAX = 100;
+const PIN_ZOOM = 11, PIN_MAX = 100, PIN_MAX_NAV = 40; // fewer while driving: turning the map moves every pin
 const pinLayer = map ? L_.layerGroup().addTo(map) : null;
 let dcById = new Map(), pinKey = '', pinT;
 const clearPins = () => { pinKey = ''; pinLayer?.clearLayers(); };
@@ -830,7 +892,7 @@ async function updatePins() {
   dcById = new Map(local.map(s => [s.id, s]));
   const b = map.getBounds(), c = map.getCenter();
   const shown = local.filter(s => b.contains([s.lat, s.lng])).map(s => [s, (s.lat - c.lat) ** 2 + (s.lng - c.lng) ** 2])
-    .sort((x, y) => x[1] - y[1]).slice(0, PIN_MAX).map(x => x[0]);
+    .sort((x, y) => x[1] - y[1]).slice(0, nav.active ? PIN_MAX_NAV : PIN_MAX).map(x => x[0]);
   const key = shown.map(s => s.id).join();
   if (key === pinKey) return; // same stations as before: leave the pins alone
   pinKey = key; pinLayer.clearLayers();
@@ -994,10 +1056,12 @@ function startNav() {
   $('#routeCard').hidden = true; $('#mapPane').classList.remove('has-card');
   $('#mapPane').classList.add('navigating');
   drawAlts();
-  $('#navBanner').hidden = $('#navFoot').hidden = false;
+  $('#navBanner').hidden = $('#navFoot').hidden = $('#compass').hidden = false;
   setVoiceIcon();
   if (st.mode === 'media') setMode('split');
   keepAwake(true);
+  if (headingUpOn()) { view.car = carHeading(); turnTo(360 - view.car, true); } // start already facing the way you drive
+  drawMe(); // the car turns into an arrow
   setFollow(true);
   navTick();
   const s = nav.steps[nav.step];
@@ -1006,12 +1070,19 @@ function startNav() {
 function stopNav(silent) {
   if (!nav.active) return;
   nav.active = false;
+  turnTo(0); drawMe(); // back to north up
   $('#mapPane').classList.remove('navigating');
-  $('#navBanner').hidden = $('#navFoot').hidden = true;
+  $('#navBanner').hidden = $('#navFoot').hidden = $('#compass').hidden = true;
   if (!silent) { $('#routeCard').hidden = false; $('#mapPane').classList.add('has-card'); drawAlts(); }
   keepAwake(false);
 }
 $('#nfStop').onclick = () => { stopNav(); clearRoute(); };
+// compass: switch between "map turns with the car" and "north always up"
+$('#compass').onclick = () => {
+  st.headingUp = !st.headingUp; save();
+  if (st.headingUp) { view.car = carHeading(); setFollow(true); } else turnTo(0);
+  toast(st.headingUp ? 'แผนที่หมุนตามทิศทางรถ' : 'เหนืออยู่ด้านบนเสมอ', 1800);
+};
 
 let progAlong = 0;
 const setText = (el, v) => { if (el.textContent !== v) el.textContent = v; };
@@ -1077,7 +1148,7 @@ function navTick() {
   setText($('#nfEta'), 'ถึง ' + fmtClock(new Date(Date.now() + secs * 1000)));
   setText($('#nfMeta'), `${fmtDur(secs)} · ${fmtDist(remain)}`);
   setText($('#speed b'), String(here.speed != null && here.speed >= 0 ? Math.round(here.speed * 3.6) : '–'));
-  if (follow && map) map.setView(here.ll, Math.max(map.getZoom(), 16), { animate: true });
+  if (follow && map) followView(16);
 }
 
 // ===================================================================
@@ -1353,5 +1424,5 @@ wake();
 startGeo();
 
 // exposed for automated tests
-window.__car = { st, nav, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
+window.__car = { st, nav, view, media, gm, ev, instr, setRoute, parseGmaps, fmtDist, sayDist, haversine, here, get map() { return map; } };
 })();

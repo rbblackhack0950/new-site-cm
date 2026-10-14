@@ -537,6 +537,65 @@ console.log('Charging & stops');
   await ctx.close();
 }
 
+// ---------- driving view ----------
+console.log('Driving view');
+{
+  const { page, ctx, errors } = await newPage({ width: 1280, height: 800 });
+  const setPos = async (p, speed = 12) => { await page.evaluate(([a, b, s]) => __setPos(a, b, s), [p[0], p[1], speed]); await page.waitForTimeout(150); };
+  const settled = () => page.waitForFunction(() => !__car.view.raf, null, { timeout: 4000 });
+  // where the road ahead is on the screen, relative to the car
+  const ahead = () => page.evaluate(() => {
+    const { nav, map, here } = __car, i = nav.seg; let j = i + 1;
+    while (j < nav.line.length - 1 && nav.cum[j] - nav.cum[i] < 40) j++;
+    const a = map.latLngToContainerPoint(here.ll), b = map.latLngToContainerPoint(nav.line[j]);
+    return { dx: b.x - a.x, dy: b.y - a.y };
+  });
+  await page.fill('#q', '13.756, 100.54'); await page.press('#q', 'Enter');
+  await page.waitForFunction(() => /กม\./.test(document.querySelector('#rcMeta').textContent));
+  await page.click('#rcGo');
+  await settled(); await page.waitForTimeout(700); // zoom and pan animations
+  await test('while navigating the map turns so the road ahead points up', async () => {
+    const r = await ahead();
+    assert.ok(r.dy < -15 && Math.abs(r.dx) < Math.abs(r.dy) * .35, `ahead is at ${JSON.stringify(r)}`);
+    assert.ok(await vis(page, '#compass'));
+  });
+  await test('the car is an arrow, low on the map, pointing up the screen', async () => {
+    assert.ok(await page.locator('.me.nav .car').count());
+    const car = await box(page, '.me .car'), m = await box(page, '#map');
+    const rel = (car.y + car.height / 2 - m.y) / m.height;
+    assert.ok(rel > .62 && rel < .8, 'low on the map, clear of the bottom card: ' + rel.toFixed(2));
+    const rot = await page.locator('.me .car').evaluate(e => e.style.transform);
+    assert.ok(Math.abs(parseFloat(rot.replace(/[^-\d.]/g, ''))) < 30, 'points up: ' + rot);
+    await shot(page, '12-driving');
+  });
+  await test('the view keeps turning with the road', async () => {
+    const before = await page.evaluate(() => __car.view.shown);
+    for (const p of [[13.7500, 100.5360], [13.7500, 100.5395], [13.7520, 100.5400]]) await setPos(p);
+    await settled(); await page.waitForTimeout(500);
+    const after = await page.evaluate(() => __car.view.shown);
+    assert.ok(Math.abs(((after - before + 540) % 360) - 180) > 20, `turned from ${before} to ${after}`);
+    const r = await ahead();
+    assert.ok(r.dy < -10, `still pointing up: ${JSON.stringify(r)}`);
+  });
+  await test('compass: north up on demand, and back', async () => {
+    await page.click('#compass'); await settled();
+    assert.equal(Math.round(await page.evaluate(() => __car.view.shown)) % 360, 0);
+    assert.equal(await page.evaluate(() => __car.st.headingUp), false);
+    await page.click('#compass'); await settled();
+    assert.equal(await page.evaluate(() => __car.st.headingUp), true);
+    const v = await page.evaluate(() => ({ shown: __car.view.shown, car: __car.view.car }));
+    assert.ok(Math.abs(((v.shown - (360 - v.car) + 540) % 360) - 180) < 4, 'turned to the heading ' + JSON.stringify(v));
+  });
+  await test('stopping navigation turns the map back to north up', async () => {
+    await page.click('#nfStop'); await settled();
+    assert.equal(Math.round(await page.evaluate(() => __car.view.shown)) % 360, 0);
+    assert.equal(await page.locator('.me.nav').count(), 0, 'dot again');
+    assert.equal(await vis(page, '#compass'), false);
+  });
+  await test('no console errors in the driving view', () => assert.deepEqual(errors, []));
+  await ctx.close();
+}
+
 // ---------- places, backup, routing fallback ----------
 console.log('Home, work, backup & routing');
 {

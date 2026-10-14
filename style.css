@@ -229,3 +229,9 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 #sheet p.muted{margin:4px 0 10px}
 .adv{display:flex;flex-wrap:wrap;gap:8px;padding:14px 0 0}
 .adv .btn{flex:1 1 auto;min-width:130px}
+/* driving view: compass, and the car as an arrow while navigating */
+#compass{top:14px;right:14px;bottom:auto;width:48px;height:48px}
+#compass svg[aria-hidden]{width:26px;height:26px;transition:transform .1s linear}
+.me .car{display:none}
+.me.nav i,.me.nav b{display:none}
+.me.nav .car{display:block;position:absolute;left:-9px;top:-9px;width:40px;height:40px;fill:var(--accent);stroke:#fff;stroke-width:1.6px;stroke-linejoin:round;paint-order:stroke;filter:drop-shadow(0 2px 5px rgba(0,0,0,.7))}
