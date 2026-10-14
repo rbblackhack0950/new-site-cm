@@ -269,7 +269,7 @@ textarea{display:block;width:100%;border-radius:12px;border:1px solid var(--line
 #mapUI{overflow:auto;padding-bottom:24px}
 #mapUI>.ui-top,#mapUI>.ui-bottom,#mapUI>#evCard{min-width:220px}
 #results{position:static;margin-top:6px;max-height:180px}
-#evCard{min-height:auto}
+#evCard{min-height:var(--ev-min-height,320px)}
 .ui-fabs,.icon-btn,.btn.square{flex-shrink:0}
 .rc-name,.ritem .t,.ev-item .t,.set-row .t{overflow-wrap:anywhere}
 #bar .bar-apps{max-width:calc(100vw - 460px)}

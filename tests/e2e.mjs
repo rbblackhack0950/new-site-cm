@@ -309,12 +309,24 @@ console.log('Responsive controls');
   const overlap = (a, b) => a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
   async function checkControls(selector) {
     const issue = await page.locator(selector).evaluateAll(els => {
-      const visible = els.filter(e => e.getClientRects().length);
+      // Scrollable lists keep off-screen item rectangles in the DOM. Compare only
+      // their painted area after clipping, so a hidden row is not called an overlap.
+      const clipped = e => {
+        const rect = e.getBoundingClientRect();
+        const r = { left: Math.max(0, rect.left), top: Math.max(0, rect.top), right: Math.min(innerWidth, rect.right), bottom: Math.min(innerHeight, rect.bottom) };
+        for (let parent = e.parentElement; parent; parent = parent.parentElement) {
+          const css = getComputedStyle(parent), b = parent.getBoundingClientRect();
+          if (/auto|scroll|hidden|clip/.test(css.overflowX)) { r.left = Math.max(r.left, b.left + parent.clientLeft); r.right = Math.min(r.right, b.left + parent.clientLeft + parent.clientWidth); }
+          if (/auto|scroll|hidden|clip/.test(css.overflowY)) { r.top = Math.max(r.top, b.top + parent.clientTop); r.bottom = Math.min(r.bottom, b.top + parent.clientTop + parent.clientHeight); }
+        }
+        return r;
+      };
+      const visible = els.filter(e => { const r = clipped(e); return e.getClientRects().length && r.right > r.left && r.bottom > r.top; });
       for (const e of visible) {
-        const r = e.getBoundingClientRect();
+        const r = clipped(e);
         for (const other of visible) {
           if (e === other || e.contains(other) || other.contains(e)) continue;
-          const b = other.getBoundingClientRect();
+          const b = clipped(other);
           if (r.left < b.right - 1 && b.left < r.right - 1 && r.top < b.bottom - 1 && b.top < r.bottom - 1) return 'overlap: ' + (e.id || e.textContent) + ' / ' + (other.id || other.textContent);
         }
       }
@@ -361,6 +373,26 @@ console.log('Responsive controls');
       await page.locator('#nfStop').scrollIntoViewIfNeeded();
       const stop = await box(page, '#nfStop');
       assert.equal(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#nfStop'), [stop.x + stop.width / 2, stop.y + stop.height / 2]), true, 'stop navigation reachable');
+    }
+  });
+  await test('long place lists scroll internally without stretching the panel to the full list height', async () => {
+    for (const [width, height] of [[1280, 800], [1000, 560], [320, 568]]) {
+      await page.setViewportSize({ width, height });
+      await page.click('#nfEv');
+      // Wait for the mocked OpenStreetMap result, not just the earlier bundled DC result.
+      await page.waitForFunction(() => document.querySelector('#evList').textContent.includes('EA Anywhere'));
+      await page.evaluate(async () => {
+        document.querySelector('#evList').innerHTML = Array.from({ length: 30 }, (_, i) => `<div class="ev-item"><div class="grow"><div class="t">สถานีทดสอบ ${i}</div><div class="muted">รายละเอียดสถานี</div></div><button class="btn primary">แวะ</button></div>`).join('');
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      });
+      const dimensions = await page.evaluate(() => {
+        const list = document.querySelector('#evList'), panel = document.querySelector('#evCard');
+        return { list: list.clientHeight, content: list.scrollHeight, panel: panel.clientHeight };
+      });
+      assert.ok(dimensions.list >= 88 && dimensions.list < dimensions.content, `${width}x${height}: list must scroll internally (${JSON.stringify(dimensions)})`);
+      assert.ok(dimensions.panel < dimensions.content, 'panel must not expand to contain all stations');
+      await checkControls('#evCard button, #navFoot button');
+      await page.click('#evX');
     }
   });
   await test('divider resizing adapts controls and keeps stop reachable in a very narrow pane', async () => {

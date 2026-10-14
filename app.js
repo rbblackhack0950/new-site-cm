@@ -3,7 +3,7 @@
 'use strict';
 // index.html names the build it expects. A page from one release with a script from another (a stale cache
 // or a half-published update) stops here so the start-up notice can repair it, instead of failing somewhere random.
-const BUILD = 34;
+const BUILD = 35;
 if (window.__want && window.__want !== BUILD) throw new Error('ไฟล์แอปคนละเวอร์ชัน (' + BUILD + '/' + window.__want + ')');
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -155,6 +155,25 @@ function fitMapControls() {
 if (window.ResizeObserver) new ResizeObserver(fitMapControls).observe(mapPane);
 else addEventListener('resize', fitMapControls);
 fitMapControls();
+// Reserve room for the panel controls and one scrollable list row. Automatic
+// flex minimums otherwise include every station and push the trip bar off screen.
+const placePanel = $('#evCard');
+const placeRows = Array.from(placePanel.children).filter(e => !e.classList.contains('ev-list'));
+function fitPlaceControls() {
+  if (placePanel.hidden) return;
+  const css = getComputedStyle(placePanel);
+  const height = Math.ceil(placeRows.reduce((sum, e) => sum + e.offsetHeight, 88) +
+    parseFloat(css.paddingTop) + parseFloat(css.paddingBottom) +
+    parseFloat(css.borderTopWidth) + parseFloat(css.borderBottomWidth) +
+    parseFloat(css.rowGap) * placeRows.length);
+  const value = height + 'px';
+  if (placePanel.style.getPropertyValue('--ev-min-height') !== value) placePanel.style.setProperty('--ev-min-height', value);
+}
+if (window.ResizeObserver) {
+  const placeObserver = new ResizeObserver(fitPlaceControls);
+  placeObserver.observe(placePanel);
+  placeRows.forEach(e => placeObserver.observe(e));
+} else addEventListener('resize', fitPlaceControls);
 $$('#bar .seg button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 
 const div = $('#divider');
@@ -966,6 +985,7 @@ function openEv(where, cat) {
   if (cat) ev.cat = cat;
   ev.open = true; clearPins(); ev.where = where === 'route' && nav.route ? 'route' : 'near';
   $('#evCard').hidden = false; $('#mapPane').classList.add('ev-open');
+  fitPlaceControls();
   $('#evWhere [data-where="route"]').disabled = !nav.route;
   $('#evCats').innerHTML = Object.entries(CATS).map(([k, c]) => `<button data-cat="${k}" class="chip-btn${k === ev.cat ? ' on' : ''}">${svg(c.icon)}${c.label}</button>`).join('');
   loadEv();
